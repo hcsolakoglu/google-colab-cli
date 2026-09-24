@@ -170,13 +170,19 @@ def test_cli_status(mock_store, mock_common_state):
     )
     mock_store.get.return_value = mock_session_state
 
-    mock_common_state.sync_sessions.return_value = ({"s1": mock_session_state}, [])
+    mock_assignment = MagicMock()
+    mock_assignment.endpoint = "e1"
+    mock_assignment.machine_shape.name = "HIGH_RAM"
+    mock_common_state.sync_sessions.return_value = (
+        {"s1": mock_session_state},
+        [mock_assignment],
+    )
 
     # Test with explicit session: uses unified format including endpoint and Status
     result = runner.invoke(app, ["status", "-s", "s1"])
     assert result.exit_code == 0
     assert (
-        "[s1] e1 | Hardware: CPU | Shape: Standard | Variant: DEFAULT | Status: IDLE"
+        "[s1] e1 | Hardware: CPU | Shape: High-RAM | Variant: DEFAULT | Status: IDLE"
         in result.output
     )
     assert (
@@ -192,12 +198,12 @@ def test_cli_status(mock_store, mock_common_state):
     assert result.exit_code == 0
     assert "Session 'missing' not found" in result.output
 
-    # Test list all sessions: same unified format
+    # Test list all sessions: same unified format and backend shape
     mock_store.get.return_value = mock_session_state
     result = runner.invoke(app, ["status"])
     assert result.exit_code == 0
     assert (
-        "[s1] e1 | Hardware: CPU | Shape: Standard | Variant: DEFAULT | Status: IDLE"
+        "[s1] e1 | Hardware: CPU | Shape: High-RAM | Variant: DEFAULT | Status: IDLE"
         in result.output
     )
 

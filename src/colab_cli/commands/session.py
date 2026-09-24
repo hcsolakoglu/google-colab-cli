@@ -365,7 +365,9 @@ def sessions_command():
         )
 
 
-def _print_status_for(s: SessionState) -> None:
+def _print_status_for(
+    s: SessionState, backend_machine_shape: Optional[str] = None
+) -> None:
     """Print one session's status line plus optional last-execution detail."""
     status = f"BUSY ({s.running})" if s.running else "IDLE"
     typer.echo(
@@ -375,7 +377,7 @@ def _print_status_for(s: SessionState) -> None:
             accelerator=s.accelerator,
             variant=s.variant,
             status=status,
-            machine_shape=s.machine_shape,
+            machine_shape=backend_machine_shape or s.machine_shape,
         )
     )
     if s.last_execution:
@@ -392,11 +394,12 @@ def status(
     """Show session status"""
     from colab_cli.common import state
 
-    local_sessions, _ = state.sync_sessions()
+    local_sessions, assignments = state.sync_sessions()
+    shape_by_endpoint = {a.endpoint: a.machine_shape.name for a in assignments}
     if session:
         s = state.store.get(session)
         if s:
-            _print_status_for(s)
+            _print_status_for(s, shape_by_endpoint.get(s.endpoint))
         else:
             typer.echo(f"[colab] Session '{session}' not found.")
         return
@@ -405,7 +408,7 @@ def status(
         typer.echo("[colab] No active sessions.")
         return
     for s in local_sessions.values():
-        _print_status_for(s)
+        _print_status_for(s, shape_by_endpoint.get(s.endpoint))
 
 
 def stop(

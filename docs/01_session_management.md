@@ -1,5 +1,6 @@
 ---
 log:
+2026-09-24: `colab status` now prefers the backend assignment's `machineShape` when available, so it reports the actual assigned shape rather than only the shape cached from the original request.
 2026-09-24: Added recovery for ambiguous assignment POST read timeouts: re-query the same notebook hash before failing so a runtime committed by the backend is adopted instead of leaked as an orphan. Session-state files are now created mode 0600.
 2026-08-10: Added `colab usage` for account-level compute-unit rate/balance via `GET /tun/m/ccu-info` on the session backend (same bearer token as `colab new`).
 2026-08-09: Added `--high-mem` to `colab new`, `colab run`, and `colab ssh` (auto-create). Assign requests now send `shape=hm` when high-RAM is requested; `colab sessions` and `colab status` display machine shape.
