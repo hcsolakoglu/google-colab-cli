@@ -562,6 +562,23 @@ def test_cli_edit_with_changes(
     assert "Edited and uploaded 'remote.txt'" in result.output
 
 
+@patch("colab_cli.commands.files.ContentsClient")
+@patch("click.edit")
+def test_cli_edit_transport_error_does_not_open_editor_or_upload(
+    mock_edit, mock_contents_class, mock_store, mock_common_state
+):
+    mock_session_state = MagicMock()
+    mock_store.get.return_value = mock_session_state
+    mock_common_state.resolve_session.return_value = "s1"
+    mock_contents_class.return_value.download.side_effect = RuntimeError("network down")
+
+    result = runner.invoke(app, ["edit", "-s", "s1", "remote.txt"])
+
+    assert result.exit_code != 0
+    mock_edit.assert_not_called()
+    mock_contents_class.return_value.upload.assert_not_called()
+
+
 def _make_400_error(message="Bad Request"):
     """Build a ColabRequestError shaped like a 400 from the assign endpoint."""
     response = MagicMock()

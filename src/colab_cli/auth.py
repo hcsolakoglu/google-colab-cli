@@ -53,6 +53,15 @@ PUBLIC_SCOPES = [
 
 TOKEN_CONFIG_PATH = os.path.expanduser("~/.config/colab-cli/token.json")
 
+
+def _write_private_text(path: str, content: str) -> None:
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    if hasattr(os, "fchmod"):
+        os.fchmod(fd, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(content)
+
+
 # Remote copy-paste OAuth flow.
 #
 # We deliberately do NOT use a localhost redirect (`run_local_server`) or the
@@ -143,8 +152,7 @@ def _get_google_auth_credentials(config_path: str) -> Credentials:
 
         # Save the credentials for the next run
         try:
-            with open(TOKEN_CONFIG_PATH, "w") as token_file:
-                token_file.write(creds.to_json())
+            _write_private_text(TOKEN_CONFIG_PATH, creds.to_json())
         except Exception as e:
             logger.error(f"Failed to save token to {TOKEN_CONFIG_PATH}: {e}")
 

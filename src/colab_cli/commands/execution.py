@@ -72,6 +72,10 @@ def _build_env_prelude(env_vars: dict[str, str]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _redacted_env_prelude(env_vars: dict[str, str]) -> str:
+    return _build_env_prelude({key: "<redacted>" for key in env_vars})
+
+
 def save_output(outputs, cell):
     if cell is None:
         return
@@ -269,7 +273,7 @@ def exec_command(
                 name,
                 "execution",
                 {
-                    "code": code,
+                    "code": _redacted_env_prelude(env_vars) + block["code"],
                     "outputs": outputs,
                     "cell_index": i if len(code_blocks) > 1 else None,
                     "cell_id": block.get("id"),

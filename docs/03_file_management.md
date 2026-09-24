@@ -1,3 +1,8 @@
+---
+log:
+2026-09-24: Made `colab edit` treat only an actual remote `FileNotFoundError` as a new file; transport/auth/server failures now abort instead of opening an empty temp file that could overwrite an existing remote path.
+---
+
 # Design: File Management (`ls`, `rm`, `upload`, `download`, `edit`)
 
 ## Overview

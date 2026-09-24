@@ -33,6 +33,7 @@ def mock_deps(mocker):
     m_request = mocker.patch("colab_cli.auth.Request")
     m_session = mocker.patch("colab_cli.auth.requests.AuthorizedSession")
     m_resources = mocker.patch("colab_cli.auth.resources")
+    m_write_private = mocker.patch("colab_cli.auth._write_private_text")
 
     # By default, pretend oauth config doesn't exist anywhere
     m_exists.return_value = False
@@ -46,6 +47,7 @@ def mock_deps(mocker):
         "request": m_request,
         "session": m_session,
         "resources": m_resources,
+        "write_private": m_write_private,
     }
 
 
@@ -97,7 +99,10 @@ def test_get_credentials_expired_token_refresh(mock_deps):
         res = get_credentials("dummy_config.json", provider=AuthProvider.OAUTH2)
 
     mock_creds.refresh.assert_called_once()
-    m_open.assert_any_call(TOKEN_CONFIG_PATH, "w")
+    mock_creds.to_json.assert_called_once()
+    mock_deps["write_private"].assert_called_once_with(
+        TOKEN_CONFIG_PATH, '{"token":"refreshed"}'
+    )
     assert res == mock_deps["session"].return_value
 
 
@@ -128,6 +133,9 @@ def test_get_credentials_no_token(mock_deps, mocker):
     assert kwargs.get("token_usage") == "remote"
     # The pasted code is exchanged for a token.
     mock_flow.fetch_token.assert_called_once_with(code="pasted-code")
+    mock_deps["write_private"].assert_called_once_with(
+        TOKEN_CONFIG_PATH, '{"token":"new"}'
+    )
 
 
 def test_remote_redirect_is_not_oob():

@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from enum import Enum
 import json
 import logging
+import time
 from typing import Dict, List, Optional, Union
 from urllib.parse import urljoin, urlparse
 import uuid
@@ -171,6 +172,53 @@ class Assignment(BaseModel):
 XSSI_PREFIX = ")]}'\n"
 TUN_ENDPOINT = "/tun/m"
 
+_SENSITIVE_HEADER_NAMES = frozenset(
+    {
+        "authorization",
+        "cookie",
+        "set-cookie",
+        "x-goog-colab-token",
+        "x-colab-runtime-proxy-token",
+    }
+)
+_SENSITIVE_JSON_KEYS = frozenset({"token", "access_token", "refresh_token", "id_token"})
+
+
+def _redact_headers(headers) -> Dict[str, str]:
+    return {
+        str(key): (
+            "<redacted>" if str(key).lower() in _SENSITIVE_HEADER_NAMES else str(value)
+        )
+        for key, value in (headers or {}).items()
+    }
+
+
+def _redact_json_secrets(value):
+    if isinstance(value, dict):
+        return {
+            key: (
+                "<redacted>"
+                if str(key).lower() in _SENSITIVE_JSON_KEYS
+                else _redact_json_secrets(item)
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_json_secrets(item) for item in value]
+    return value
+
+
+def _safe_response_body_for_log(body: str) -> str:
+    if not body:
+        return body
+    prefix = XSSI_PREFIX if body.startswith(XSSI_PREFIX) else ""
+    payload = body[len(prefix) :] if prefix else body
+    try:
+        parsed = json.loads(payload)
+    except (TypeError, json.JSONDecodeError):
+        return f"<non-JSON response body omitted: {len(body)} chars>"
+    return prefix + json.dumps(_redact_json_secrets(parsed), separators=(",", ":"))
+
 
 class ColabRequestError(Exception):
     def __init__(self, message, request, response, response_body=None):
@@ -224,10 +272,14 @@ class Client:
             method, endpoint, headers=request_headers, params=params, **kwargs
         )
 
-        self.logger.debug(f"Request Headers: {response.request.headers}")
+        self.logger.debug(
+            f"Request Headers: {_redact_headers(response.request.headers)}"
+        )
         self.logger.debug(f"Response: {response.status_code} {response.reason}")
-        self.logger.debug(f"Response Headers: {response.headers}")
-        self.logger.debug(f"Response Body: {response.text}")
+        self.logger.debug(f"Response Headers: {_redact_headers(response.headers)}")
+        self.logger.debug(
+            f"Response Body: {_safe_response_body_for_log(response.text)}"
+        )
         if not response.ok:
             raise ColabRequestError(
                 f"Failed to issue request {method} {endpoint}: {response.reason}",
@@ -272,9 +324,7 @@ class Client:
         accelerator: Optional[Accelerator] = None,
         shape: Optional[Shape] = None,
     ) -> Union[PostAssignmentResponse, Assignment]:
-        assignment = self._get_assignment(
-            notebook_hash, variant, accelerator, shape
-        )
+        assignment = self._get_assignment(notebook_hash, variant, accelerator, shape)
         if isinstance(assignment, Assignment):
             return assignment
 
@@ -282,6 +332,23 @@ class Client:
             res = self._post_assignment(
                 notebook_hash, assignment.token, variant, accelerator, shape
             )
+        except requests.exceptions.ReadTimeout as timeout_error:
+            # The POST outcome is ambiguous: the backend may have committed
+            # the assignment before the response timed out. Re-query the same
+            # notebook hash instead of issuing another POST, which could
+            # allocate a duplicate runtime.
+            for delay in (0, 1, 2):
+                if delay:
+                    time.sleep(delay)
+                try:
+                    recovered = self._get_assignment(
+                        notebook_hash, variant, accelerator, shape
+                    )
+                except Exception:
+                    continue
+                if isinstance(recovered, Assignment):
+                    return recovered
+            raise timeout_error
         except ColabRequestError as e:
             if get_status_code(e) == 412:
                 raise TooManyAssignmentsError(str(e))

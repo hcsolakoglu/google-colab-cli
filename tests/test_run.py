@@ -245,6 +245,7 @@ def test_run_env_flag_after_script_sets_env_and_preserves_argv(
     mock_spawn_keep_alive,
     assign_response,
     script_path,
+    mock_common_state,
 ):
     """`--env KEY=VALUE` after the script path should configure the remote
     environment, not get forwarded into sys.argv."""
@@ -271,6 +272,14 @@ def test_run_env_flag_after_script_sets_env_and_preserves_argv(
     assert "'alpha'" in body
     assert "'--env'" not in body
     assert "'HF_TOKEN=abc'" not in body
+    history_payload = next(
+        call.args[2]
+        for call in mock_common_state.history.log_event.call_args_list
+        if call.args[1] == "execution"
+    )
+    assert "HF_TOKEN" in history_payload["code"]
+    assert "abc" not in history_payload["code"]
+    assert "<redacted>" in history_payload["code"]
 
 
 def test_run_env_flags_accumulate_and_split_on_first_equals(

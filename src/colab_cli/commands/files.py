@@ -174,7 +174,7 @@ def edit(
 
         try:
             contents.download(remote_path, local_path)
-        except Exception:
+        except FileNotFoundError:
             # If download fails, assume file doesn't exist and start empty
             pass
 

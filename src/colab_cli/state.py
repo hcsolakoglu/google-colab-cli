@@ -81,7 +81,10 @@ class _LockedFileStore:
     @contextlib.contextmanager
     def _lock_exclusive(self) -> Iterator[IO]:
         with self._rwlock.write_lock():
-            with open(self.path, "a+") as f:
+            fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o600)
+            if hasattr(os, "fchmod"):
+                os.fchmod(fd, 0o600)
+            with os.fdopen(fd, "r+") as f:
                 yield f
 
 

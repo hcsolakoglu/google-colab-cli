@@ -170,12 +170,22 @@ def setup_logging(log_to_stderr: bool):
     logger.setLevel(logging.DEBUG)
 
     requests_log = logging.getLogger("urllib3")
-    requests_log.setLevel(logging.DEBUG)
+    # urllib3's DEBUG lines include full request URLs. Contents API requests
+    # carry the short-lived runtime proxy token in the query string, so never
+    # persist urllib3 wire logging in the CLI's default debug log.
+    requests_log.setLevel(logging.WARNING)
     requests_log.propagate = True
 
     log_dir = os.path.expanduser("~/.config/colab-cli")
-    os.makedirs(log_dir, exist_ok=True)
-    file_handler = logging.FileHandler(os.path.join(log_dir, "colab.log"))
+    os.makedirs(log_dir, mode=0o700, exist_ok=True)
+    if os.name != "nt":
+        os.chmod(log_dir, 0o700)
+    log_path = os.path.join(log_dir, "colab.log")
+    fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    if hasattr(os, "fchmod"):
+        os.fchmod(fd, 0o600)
+    os.close(fd)
+    file_handler = logging.FileHandler(log_path)
     file_handler.setFormatter(logging.Formatter(log_format))
     logger.addHandler(file_handler)
 

@@ -20,8 +20,16 @@ from colab_cli.runtime import ColabRuntime
 
 
 def test_colab_runtime_kernel_client():
-    target_attr = "ColabKernelClient" if hasattr(jupyter_kernel_client, "ColabKernelClient") else "KernelClient"
-    token_param_name = "proxy_token" if hasattr(jupyter_kernel_client, "ColabKernelClient") else "token"
+    target_attr = (
+        "ColabKernelClient"
+        if hasattr(jupyter_kernel_client, "ColabKernelClient")
+        else "KernelClient"
+    )
+    token_param_name = (
+        "proxy_token"
+        if hasattr(jupyter_kernel_client, "ColabKernelClient")
+        else "token"
+    )
 
     with patch.object(jupyter_kernel_client, target_attr) as mock_kc_cls:
         mock_kc = mock_kc_cls.return_value
@@ -161,5 +169,5 @@ def test_colab_runtime_stdin_logging():
         "test-s", "stdin_request", {"prompt": "Enter something: "}
     )
     mock_history.log_event.assert_any_call(
-        "test-s", "input_reply", {"value": "user input"}
+        "test-s", "input_reply", {"value": "<redacted>"}
     )

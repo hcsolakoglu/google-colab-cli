@@ -207,7 +207,12 @@ class ColabRuntime:
             res = original_stdin_hook(prompt) if original_stdin_hook else input(prompt)
 
             if self.history and self.session_name:
-                self.history.log_event(self.session_name, "input_reply", {"value": res})
+                # stdin may carry passwords, OAuth codes, API keys, or other
+                # secrets. Preserve the event for chronology without persisting
+                # the user's reply.
+                self.history.log_event(
+                    self.session_name, "input_reply", {"value": "<redacted>"}
+                )
             return res
 
         if allow_stdin:
