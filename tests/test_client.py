@@ -77,6 +77,36 @@ def test_client_assign_new(client, mock_session):
     assert last_call_args.kwargs["headers"]["X-Goog-Colab-Token"] == "xsrf_token"
 
 
+def test_client_assign_post_includes_body(client, mock_session):
+    """The tunnel frontend rejects bodiless POSTs with 411; /assign must
+    carry a body."""
+    get_resp = MagicMock()
+    get_resp.ok = True
+    get_resp.text = ")]}'\n" + json.dumps(
+        {"acc": "NONE", "nbh": "some_nbh", "token": "xsrf_token", "variant": "DEFAULT"}
+    )
+    post_resp = MagicMock()
+    post_resp.ok = True
+    post_resp.text = ")]}'\n" + json.dumps(
+        {
+            "accelerator": "NONE",
+            "endpoint": "new_endpoint",
+            "runtimeProxyInfo": {
+                "token": "proxy_token",
+                "tokenExpiresInSeconds": 3600,
+                "url": "http://backend",
+            },
+            "variant": 0,
+        }
+    )
+    mock_session.request.side_effect = [get_resp, post_resp]
+
+    client.assign(uuid.uuid4())
+
+    post_kwargs = mock_session.request.call_args_list[1].kwargs
+    assert post_kwargs.get("data"), "assign POST must carry a body (411 otherwise)"
+
+
 def test_client_assign_412_raises_too_many_assignments(client, mock_session):
     """A 412 on the POST /assign step should surface as
     TooManyAssignmentsError, not the raw ColabRequestError."""
@@ -119,6 +149,9 @@ def test_client_unassign(client, mock_session):
         last_call_args.kwargs["headers"]["X-Goog-Colab-Token"] == "unassign_xsrf_token"
     )
     assert "unassign/my_endpoint" in last_call_args.args[1]
+    assert last_call_args.kwargs.get("data"), (
+        "unassign POST must carry a body (411 otherwise)"
+    )
 
 
 def test_client_assign_existing(client, mock_session):

@@ -262,7 +262,9 @@ class Client:
         resp = self._issue_request(url, schema=GetUnassignRequest)
         headers = {COLAB_XSRF_TOKEN_HEADER["key"]: resp.token}
         return self._issue_request(
-            url, method="POST", headers=headers, schema=BaseModel
+            url, method="POST", headers=headers, schema=BaseModel,
+            # The tunnel frontend rejects bodiless POSTs with 411.
+            data=b"{}",
         )
 
     def assign(
@@ -330,7 +332,9 @@ class Client:
         url = self._build_assign_url(notebook_hash, variant, accelerator, shape)
         headers = {COLAB_XSRF_TOKEN_HEADER["key"]: xsrf_token}
         return self._issue_request(
-            url, method="POST", headers=headers, schema=PostAssignmentResponse
+            url, method="POST", headers=headers, schema=PostAssignmentResponse,
+            # The tunnel frontend rejects bodiless POSTs with 411.
+            data=b"{}",
         )
 
     def keep_alive_assignment(self, endpoint: str):
