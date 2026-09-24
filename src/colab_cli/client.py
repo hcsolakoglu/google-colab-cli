@@ -262,7 +262,9 @@ class Client:
         resp = self._issue_request(url, schema=GetUnassignRequest)
         headers = {COLAB_XSRF_TOKEN_HEADER["key"]: resp.token}
         return self._issue_request(
-            url, method="POST", headers=headers, schema=BaseModel
+            url, method="POST", headers=headers, schema=BaseModel,
+            # The tunnel frontend rejects bodiless POSTs with 411.
+            data=b"{}",
         )
 
     def assign(
@@ -282,6 +284,17 @@ class Client:
             res = self._post_assignment(
                 notebook_hash, assignment.token, variant, accelerator, shape
             )
+        except requests.exceptions.ReadTimeout:
+            # The POST may have succeeded server-side even though the response
+            # never arrived. Reconcile with a GET on the same notebook hash
+            # and adopt the assignment if it materialized. Never re-POST:
+            # that risks a duplicate billable allocation.
+            reconciled = self._get_assignment(
+                notebook_hash, variant, accelerator, shape
+            )
+            if isinstance(reconciled, Assignment):
+                return reconciled
+            raise
         except ColabRequestError as e:
             if get_status_code(e) == 412:
                 raise TooManyAssignmentsError(str(e))
@@ -330,7 +343,9 @@ class Client:
         url = self._build_assign_url(notebook_hash, variant, accelerator, shape)
         headers = {COLAB_XSRF_TOKEN_HEADER["key"]: xsrf_token}
         return self._issue_request(
-            url, method="POST", headers=headers, schema=PostAssignmentResponse
+            url, method="POST", headers=headers, schema=PostAssignmentResponse,
+            # The tunnel frontend rejects bodiless POSTs with 411.
+            data=b"{}",
         )
 
     def keep_alive_assignment(self, endpoint: str):
