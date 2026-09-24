@@ -174,8 +174,11 @@ def edit(
 
         try:
             contents.download(remote_path, local_path)
-        except Exception:
-            # If download fails, assume file doesn't exist and start empty
+        except FileNotFoundError:
+            # Only a missing remote file means "start empty". Any other
+            # error (network, auth, token expiry, server error) must surface
+            # instead of silently editing a blank file and overwriting the
+            # remote on save.
             pass
 
         hash_before = get_file_hash(local_path)
