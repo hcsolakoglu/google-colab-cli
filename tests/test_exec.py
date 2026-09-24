@@ -110,6 +110,10 @@ def test_cli_exec_env_injects_prelude(
     assert result.exit_code == 0, result.output
     expected = "import os\nos.environ['HF_TOKEN'] = 'abc'\n" + code
     mock_runtime.execute_code.assert_any_call(expected, output_hook=ANY, timeout=30.0)
+    history_payload = mock_common_state.history.log_event.call_args.args[2]
+    assert "HF_TOKEN" in history_payload["code"]
+    assert "abc" not in history_payload["code"]
+    assert "<redacted>" in history_payload["code"]
 
 
 def test_cli_exec_env_flags_accumulate_and_split_on_first_equals(

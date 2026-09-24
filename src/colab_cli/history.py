@@ -44,7 +44,10 @@ class HistoryLogger:
             "event_type": event_type,
             **data,
         }
-        with open(log_path, "a", encoding="utf-8") as f:
+        fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        if hasattr(os, "fchmod"):
+            os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "a", encoding="utf-8") as f:
             f.write(json.dumps(event) + "\n")
 
     def list_sessions(self) -> List[str]:
