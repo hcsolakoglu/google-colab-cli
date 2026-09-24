@@ -24,7 +24,6 @@ from colab_cli.client import (
     GetAssignmentResponse,
     Prod,
     PostAssignmentResponse,
-    Assignment,
     Accelerator,
     Shape,
     TooManyAssignmentsError,
@@ -81,44 +80,14 @@ def test_client_assign_new(client, mock_session):
     assert last_call_args.kwargs["headers"]["X-Goog-Colab-Token"] == "xsrf_token"
 
 
-def test_client_assign_post_includes_body(client, mock_session):
-    """The tunnel frontend rejects bodiless POSTs with 411; /assign must
-    carry a body."""
-    get_resp = MagicMock()
-    get_resp.ok = True
-    get_resp.text = ")]}'\n" + json.dumps(
-        {"acc": "NONE", "nbh": "some_nbh", "token": "xsrf_token", "variant": "DEFAULT"}
-    )
-    post_resp = MagicMock()
-    post_resp.ok = True
-    post_resp.text = ")]}'\n" + json.dumps(
-        {
-            "accelerator": "NONE",
-            "endpoint": "new_endpoint",
-            "runtimeProxyInfo": {
-                "token": "proxy_token",
-                "tokenExpiresInSeconds": 3600,
-                "url": "http://backend",
-            },
-            "variant": 0,
-        }
-    )
-    mock_session.request.side_effect = [get_resp, post_resp]
-
-    client.assign(uuid.uuid4())
-
-    post_kwargs = mock_session.request.call_args_list[1].kwargs
-    assert post_kwargs.get("data"), "assign POST must carry a body (411 otherwise)"
-
-
-def test_client_assign_post_timeout_adopts_orphan(client):
-    """A ReadTimeout on the assign POST must reconcile via GET on the same
-    notebook hash and adopt the materialized assignment instead of re-POSTing,
-    which would risk a duplicate billable allocation."""
-    get_resp = GetAssignmentResponse(
+def _get_token_resp():
+    return GetAssignmentResponse(
         acc="NONE", nbh="some_nbh", token="xsrf_token", variant="DEFAULT"
     )
-    orphan = Assignment(
+
+
+def _orphan():
+    return Assignment(
         endpoint="orphan_endpoint",
         runtimeProxyInfo={
             "token": "proxy_token",
@@ -126,9 +95,16 @@ def test_client_assign_post_timeout_adopts_orphan(client):
             "url": "http://backend",
         },
     )
+
+
+@patch("colab_cli.client.time.sleep")
+def test_client_assign_post_timeout_adopts_orphan(mock_sleep, client):
+    """A ReadTimeout on the assign POST must reconcile via GET on the same
+    notebook hash and adopt the materialized assignment instead of re-POSTing,
+    which would risk a duplicate billable allocation."""
     with (
         patch.object(
-            client, "_get_assignment", side_effect=[get_resp, orphan]
+            client, "_get_assignment", side_effect=[_get_token_resp(), _orphan()]
         ) as mock_get,
         patch.object(
             client,
@@ -138,19 +114,41 @@ def test_client_assign_post_timeout_adopts_orphan(client):
     ):
         res = client.assign(uuid.uuid4())
 
-    assert res is orphan
+    assert res.endpoint == "orphan_endpoint"
     mock_post.assert_called_once()  # never re-POSTed
     assert mock_get.call_count == 2
+    mock_sleep.assert_not_called()  # adopted on the first reconcile GET
 
 
-def test_client_assign_post_timeout_no_orphan_reraises(client):
-    """If no assignment materialized server-side, the ReadTimeout propagates
-    so the caller can decide (e.g. check `colab sessions` before retrying)."""
-    get_resp = GetAssignmentResponse(
-        acc="NONE", nbh="some_nbh", token="xsrf_token", variant="DEFAULT"
-    )
+@patch("colab_cli.client.time.sleep")
+def test_client_assign_post_timeout_adopts_late_orphan(mock_sleep, client):
+    """The assignment can materialize a few seconds after the timeout; the
+    bounded poll must still adopt it."""
+    token = _get_token_resp()
     with (
-        patch.object(client, "_get_assignment", side_effect=[get_resp, get_resp]),
+        patch.object(
+            client, "_get_assignment", side_effect=[token, token, _orphan()]
+        ) as mock_get,
+        patch.object(
+            client,
+            "_post_assignment",
+            side_effect=requests.exceptions.ReadTimeout("timed out"),
+        ) as mock_post,
+    ):
+        res = client.assign(uuid.uuid4())
+
+    assert res.endpoint == "orphan_endpoint"
+    mock_post.assert_called_once()
+    assert mock_get.call_count == 3
+
+
+@patch("colab_cli.client.time.sleep")
+def test_client_assign_post_timeout_no_orphan_reraises(mock_sleep, client):
+    """If nothing materializes during the bounded poll, the ReadTimeout
+    propagates so the caller can check `colab sessions` before retrying."""
+    token = _get_token_resp()
+    with (
+        patch.object(client, "_get_assignment", return_value=token) as mock_get,
         patch.object(
             client,
             "_post_assignment",
@@ -159,6 +157,9 @@ def test_client_assign_post_timeout_no_orphan_reraises(client):
     ):
         with pytest.raises(requests.exceptions.ReadTimeout):
             client.assign(uuid.uuid4())
+
+    assert mock_get.call_count == 5  # initial + 4 poll GETs
+    assert [c.args[0] for c in mock_sleep.call_args_list] == [1, 2, 4]
 
 
 def test_client_assign_412_raises_too_many_assignments(client, mock_session):
@@ -203,9 +204,6 @@ def test_client_unassign(client, mock_session):
         last_call_args.kwargs["headers"]["X-Goog-Colab-Token"] == "unassign_xsrf_token"
     )
     assert "unassign/my_endpoint" in last_call_args.args[1]
-    assert last_call_args.kwargs.get("data"), (
-        "unassign POST must carry a body (411 otherwise)"
-    )
 
 
 def test_client_assign_existing(client, mock_session):

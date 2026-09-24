@@ -35,6 +35,7 @@ import os
 import uuid
 from typing import List, Optional
 
+import requests
 import typer
 from typing_extensions import Annotated
 
@@ -336,6 +337,14 @@ def run_command(
             )
             raise typer.Exit(code=1)
         raise
+    except requests.exceptions.ReadTimeout:
+        typer.echo(
+            "[colab] Allocation timed out and no assignment appeared. The "
+            "backend may still have created one: run `colab sessions` to "
+            "check for an orphan before creating a new session.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
 
     if isinstance(res, PostAssignmentResponse):
         token = res.runtime_proxy_info.token

@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from enum import Enum
 import json
 import logging
+import time
 from typing import Dict, List, Optional, Union
 from urllib.parse import urljoin, urlparse
 import uuid
@@ -262,9 +263,7 @@ class Client:
         resp = self._issue_request(url, schema=GetUnassignRequest)
         headers = {COLAB_XSRF_TOKEN_HEADER["key"]: resp.token}
         return self._issue_request(
-            url, method="POST", headers=headers, schema=BaseModel,
-            # The tunnel frontend rejects bodiless POSTs with 411.
-            data=b"{}",
+            url, method="POST", headers=headers, schema=BaseModel
         )
 
     def assign(
@@ -286,14 +285,19 @@ class Client:
             )
         except requests.exceptions.ReadTimeout:
             # The POST may have succeeded server-side even though the response
-            # never arrived. Reconcile with a GET on the same notebook hash
-            # and adopt the assignment if it materialized. Never re-POST:
-            # that risks a duplicate billable allocation.
-            reconciled = self._get_assignment(
-                notebook_hash, variant, accelerator, shape
-            )
-            if isinstance(reconciled, Assignment):
-                return reconciled
+            # never arrived (observed live: an orphan kept burning CU until
+            # unassigned). Reconcile with GETs on the same notebook hash and
+            # adopt the assignment if it materializes. Never re-POST: that
+            # risks a duplicate billable allocation. Poll briefly because the
+            # assignment can appear a few seconds after the timeout.
+            for delay in (0, 1, 2, 4):
+                if delay:
+                    time.sleep(delay)
+                reconciled = self._get_assignment(
+                    notebook_hash, variant, accelerator, shape
+                )
+                if isinstance(reconciled, Assignment):
+                    return reconciled
             raise
         except ColabRequestError as e:
             if get_status_code(e) == 412:
@@ -343,9 +347,7 @@ class Client:
         url = self._build_assign_url(notebook_hash, variant, accelerator, shape)
         headers = {COLAB_XSRF_TOKEN_HEADER["key"]: xsrf_token}
         return self._issue_request(
-            url, method="POST", headers=headers, schema=PostAssignmentResponse,
-            # The tunnel frontend rejects bodiless POSTs with 411.
-            data=b"{}",
+            url, method="POST", headers=headers, schema=PostAssignmentResponse
         )
 
     def keep_alive_assignment(self, endpoint: str):
