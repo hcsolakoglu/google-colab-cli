@@ -175,10 +175,10 @@ def edit(
         try:
             contents.download(remote_path, local_path)
         except FileNotFoundError:
-            # Only a missing remote file means "start empty". Any other
-            # error (network, auth, token expiry, server error) must surface
-            # instead of silently editing a blank file and overwriting the
-            # remote on save.
+            # Only a genuine "not found" from the Contents API means "start
+            # empty". Proxy failures (expired token, network, server errors)
+            # raise other exceptions and abort before the editor opens, so a
+            # failed download can never silently overwrite the remote file.
             pass
 
         hash_before = get_file_hash(local_path)

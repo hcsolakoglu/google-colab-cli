@@ -18,7 +18,7 @@ from urllib.parse import quote
 import requests
 
 from colab_cli.state import SessionState
-from colab_cli.utils import get_status_code
+from colab_cli.utils import RuntimeProxyError, get_status_code
 
 
 class ContentsClient:
@@ -39,7 +39,15 @@ class ContentsClient:
 
         response = requests.request(method, url, params=req_params, json=json_data)
 
-        if get_status_code(response) == 404:
+        status_code = get_status_code(response)
+        if status_code in (401, 404) and not response.content:
+            # The tunnel frontend returns an empty 401/404 for an expired
+            # runtime proxy token. A genuine Contents API "not found" carries
+            # a JSON error body, so only that case stays FileNotFoundError.
+            # Misclassifying proxy failures here lets callers like `colab
+            # edit` treat them as "start empty" and overwrite the remote file.
+            raise RuntimeProxyError(status_code)
+        if status_code == 404:
             raise FileNotFoundError(f"File or directory not found: {path}")
 
         response.raise_for_status()

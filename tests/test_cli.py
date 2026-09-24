@@ -17,6 +17,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from typer.testing import CliRunner
+from colab_cli.utils import RuntimeProxyError
 
 from colab_cli.cli import app
 from colab_cli.client import (
@@ -567,9 +568,9 @@ def test_cli_edit_with_changes(
 def test_cli_edit_download_error_propagates(
     mock_edit, mock_contents_class, mock_store, mock_common_state
 ):
-    """A failed download that is NOT 'file not found' (network/auth/token/
-    server error) must abort the edit, not open a blank file that would
-    overwrite the remote on save."""
+    """A failed download that is NOT 'file not found' (network/auth/server
+    error) must abort the edit, not open a blank file that would overwrite
+    the remote on save."""
     mock_session_state = MagicMock()
     mock_store.get.return_value = mock_session_state
     mock_common_state.resolve_session.return_value = "s1"
@@ -582,6 +583,28 @@ def test_cli_edit_download_error_propagates(
 
     assert result.exit_code != 0
     assert isinstance(result.exception, RuntimeError)
+    mock_edit.assert_not_called()
+    mock_contents_class.return_value.upload.assert_not_called()
+
+
+@patch("colab_cli.commands.files.ContentsClient")
+@patch("click.edit")
+def test_cli_edit_proxy_error_propagates(
+    mock_edit, mock_contents_class, mock_store, mock_common_state
+):
+    """An expired proxy token surfaces as an empty-body 404, which
+    ContentsClient maps to RuntimeProxyError (not FileNotFoundError). The
+    edit must abort instead of opening a blank file over a live remote."""
+    mock_session_state = MagicMock()
+    mock_store.get.return_value = mock_session_state
+    mock_common_state.resolve_session.return_value = "s1"
+
+    mock_contents_class.return_value.download.side_effect = RuntimeProxyError(404)
+
+    result = runner.invoke(app, ["edit", "-s", "s1", "remote.txt"])
+
+    assert result.exit_code != 0
+    assert isinstance(result.exception, RuntimeProxyError)
     mock_edit.assert_not_called()
     mock_contents_class.return_value.upload.assert_not_called()
 

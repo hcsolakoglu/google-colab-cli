@@ -20,6 +20,7 @@ from colab_cli.contents import ContentsClient
 from requests import Response
 
 from colab_cli.state import SessionState
+from colab_cli.utils import RuntimeProxyError
 
 
 @pytest.fixture
@@ -83,6 +84,43 @@ def test_rm_file(mock_request, client):
 def test_404_error(mock_request, client):
     mock_resp = MagicMock(spec=Response)
     mock_resp.status_code = 404
+    mock_request.return_value = mock_resp
+
+    with pytest.raises(FileNotFoundError):
+        client.list_dir("nonexistent")
+
+
+@patch("colab_cli.contents.requests.request")
+def test_empty_404_raises_runtime_proxy_error(mock_request, client):
+    """An empty-body 404 means the tunnel frontend rejected the proxy token,
+    not "file not found" -- it must not be misclassified."""
+    mock_resp = MagicMock(spec=Response)
+    mock_resp.status_code = 404
+    mock_resp.content = b""
+    mock_request.return_value = mock_resp
+
+    with pytest.raises(RuntimeProxyError):
+        client.list_dir("existing-file")
+
+
+@patch("colab_cli.contents.requests.request")
+def test_401_empty_raises_runtime_proxy_error(mock_request, client):
+    mock_resp = MagicMock(spec=Response)
+    mock_resp.status_code = 401
+    mock_resp.content = b""
+    mock_request.return_value = mock_resp
+
+    with pytest.raises(RuntimeProxyError):
+        client.list_dir("existing-file")
+
+
+@patch("colab_cli.contents.requests.request")
+def test_json_404_stays_file_not_found(mock_request, client):
+    """A genuine Contents API 404 carries a JSON error body and stays
+    FileNotFoundError, so `colab edit` can still start empty for new files."""
+    mock_resp = MagicMock(spec=Response)
+    mock_resp.status_code = 404
+    mock_resp.content = b'{"message": "file not found"}'
     mock_request.return_value = mock_resp
 
     with pytest.raises(FileNotFoundError):

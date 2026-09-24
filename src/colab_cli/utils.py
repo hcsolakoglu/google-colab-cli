@@ -24,6 +24,15 @@ from rich.markdown import Markdown
 from rich.text import Text
 
 
+class RuntimeProxyError(Exception):
+    """The runtime tunnel rejected an expired or invalid proxy token."""
+
+    def __init__(self, status_code: int, response_body: bytes = b""):
+        super().__init__(f"Runtime proxy rejected credentials (HTTP {status_code})")
+        self.status_code = status_code
+        self.response_body = response_body
+
+
 def get_status_code(e: Exception) -> Optional[int]:
     """Safely extracts status code from various exception types."""
     if hasattr(e, "response") and e.response is not None:
