@@ -213,5 +213,5 @@ def test_colab_runtime_stdin_logging():
         "test-s", "stdin_request", {"prompt": "Enter something: "}
     )
     mock_history.log_event.assert_any_call(
-        "test-s", "input_reply", {"value": "user input"}
+        "test-s", "input_reply", {"value": "<redacted>"}
     )
