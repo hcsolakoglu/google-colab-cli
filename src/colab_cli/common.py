@@ -15,6 +15,7 @@
 import logging
 import os
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -27,6 +28,8 @@ from colab_cli.state import SessionState, StateStore, SettingsStore
 
 # Headroom so a token doesn't expire mid-command.
 TOKEN_REFRESH_MARGIN = timedelta(minutes=5)
+ASSIGNMENT_RECHECK_DELAY_SECONDS = 2.0
+STALE_SESSION_MAX_MISSES = 3
 
 
 def _apply_proxy_info(s: SessionState, info: RuntimeProxyInfo):
@@ -43,6 +46,7 @@ class State:
         self.auth_provider = AuthProvider.OAUTH2
         self._client = None
         self._store = None
+        self._stale_store = None
         self._settings_store = None
         self._history = None
         self._sessions = None
@@ -52,6 +56,21 @@ class State:
         if self._store is None:
             self._store = StateStore(self.config_path)
         return self._store
+
+    @property
+    def stale_store(self):
+        if self._stale_store is None:
+            if self.config_path:
+                root, ext = os.path.splitext(self.config_path)
+                stale_path = (
+                    f"{root}.stale{ext}" if ext else f"{self.config_path}.stale"
+                )
+            else:
+                stale_path = os.path.expanduser(
+                    "~/.config/colab-cli/stale-sessions.json"
+                )
+            self._stale_store = StateStore(stale_path)
+        return self._stale_store
 
     @property
     def settings_store(self):
@@ -76,9 +95,101 @@ class State:
             self._client = Client(Prod(), creds)
         return self._client
 
+    def _list_assignments_with_retry(self, required_endpoints: set[str]):
+        """List assignments, confirming local-endpoint misses with one retry."""
+        first = self.client.list_assignments()
+        first_by_endpoint = {a.endpoint: a for a in first}
+        missing = required_endpoints - set(first_by_endpoint)
+        if not missing:
+            return first, first_by_endpoint, set()
+
+        time.sleep(ASSIGNMENT_RECHECK_DELAY_SECONDS)
+        second = self.client.list_assignments()
+        second_by_endpoint = {a.endpoint: a for a in second}
+        confirmed_missing = missing - set(second_by_endpoint)
+
+        # Use the latest listing, but retain local endpoints that were present in
+        # the first listing so a contradictory second listing cannot destroy
+        # their only local handle in this invocation.
+        stable_by_endpoint = dict(second_by_endpoint)
+        for endpoint in required_endpoints - missing:
+            if endpoint not in stable_by_endpoint:
+                stable_by_endpoint[endpoint] = first_by_endpoint[endpoint]
+
+        assignments = list(second)
+        seen = {a.endpoint for a in assignments}
+        for endpoint, assignment in stable_by_endpoint.items():
+            if endpoint not in seen:
+                assignments.append(assignment)
+        return assignments, stable_by_endpoint, confirmed_missing
+
+    def _mark_session_stale(self, s: SessionState) -> bool:
+        """Move/update a missing assignment in the stale store.
+
+        Returns True when the record reached the consecutive-miss threshold and
+        was finally removed.
+        """
+        existing = self.stale_store.get(s.name)
+        if existing is not None:
+            s = existing
+        s.assignment_misses += 1
+        if s.stale_since is None:
+            s.stale_since = datetime.now(timezone.utc)
+
+        self.store.remove(s.name)
+        if self._sessions and s.name in self._sessions:
+            del self._sessions[s.name]
+
+        if s.assignment_misses >= STALE_SESSION_MAX_MISSES:
+            self.stale_store.remove(s.name)
+            self.history.log_event(
+                s.name,
+                "session_terminated",
+                {"reason": "confirmed_missing", "endpoint": s.endpoint},
+            )
+            typer.echo(
+                f"[colab] Session '{s.name}' missing from server assignments "
+                f"for {STALE_SESSION_MAX_MISSES} consecutive checks; removed "
+                f"stale local record (endpoint {s.endpoint})."
+            )
+            return True
+
+        self.stale_store.add(s)
+        self.history.log_event(
+            s.name,
+            "session_stale",
+            {"endpoint": s.endpoint, "misses": s.assignment_misses},
+        )
+        typer.echo(
+            f"[colab] Session '{s.name}' not in server assignments; kept as "
+            f"stale (endpoint {s.endpoint}, miss {s.assignment_misses}/"
+            f"{STALE_SESSION_MAX_MISSES}). Run `colab sessions` to reconcile."
+        )
+        return False
+
+    def _recover_stale_session(self, s: SessionState, assignment) -> SessionState:
+        _apply_proxy_info(s, assignment.runtime_proxy_info)
+        s.assignment_misses = 0
+        s.stale_since = None
+        self.store.add(s)
+        self.stale_store.remove(s.name)
+        if self._sessions is not None:
+            self._sessions[s.name] = s
+        self.history.log_event(
+            s.name,
+            "session_recovered",
+            {"endpoint": s.endpoint, "by": "assignment_reconciliation"},
+        )
+        typer.echo(
+            f"[colab] Recovered stale session '{s.name}' from endpoint {s.endpoint}."
+        )
+        return s
+
     def prune_session(self, name: str):
-        """Removes a session from local state."""
+        """Removes a session from local active and stale state."""
         self.store.remove(name)
+        if self.stale_store.get(name) is not None:
+            self.stale_store.remove(name)
         if self._sessions and name in self._sessions:
             del self._sessions[name]
         self.history.log_event(name, "session_terminated", {"reason": "pruned"})
@@ -86,64 +197,87 @@ class State:
     def get_session(
         self, name: str, ignore_missing_session: bool = False
     ) -> Optional[SessionState]:
-        """Load a session, refreshing its runtime proxy token if it's near expiry.
-
-        A session is missing if it's unknown locally or its assignment is gone
-        server-side (in which case it's pruned). Missing sessions print an error
-        and exit, unless ignore_missing_session is set, in which case this
-        returns None.
-        """
+        """Load a session and conservatively reconcile its server assignment."""
         s = self.store.get(name)
-        if s and (
-            not s.token_expires_at
-            or s.token_expires_at - datetime.now(timezone.utc) <= TOKEN_REFRESH_MARGIN
-        ):
-            by_endpoint = {a.endpoint: a for a in self.client.list_assignments()}
-            if s.endpoint in by_endpoint:
-                _apply_proxy_info(s, by_endpoint[s.endpoint].runtime_proxy_info)
-                self.store.add(s)
-            else:
-                self.prune_session(name)
+        stale = None if s is not None else self.stale_store.get(name)
+        candidate = s or stale
+
+        needs_reconcile = bool(
+            candidate
+            and (
+                stale is not None
+                or not candidate.token_expires_at
+                or candidate.token_expires_at - datetime.now(timezone.utc)
+                <= TOKEN_REFRESH_MARGIN
+            )
+        )
+        if candidate and needs_reconcile:
+            _, by_endpoint, confirmed_missing = self._list_assignments_with_retry(
+                {candidate.endpoint}
+            )
+            assignment = by_endpoint.get(candidate.endpoint)
+            if assignment is not None:
+                if stale is not None:
+                    s = self._recover_stale_session(candidate, assignment)
+                else:
+                    _apply_proxy_info(candidate, assignment.runtime_proxy_info)
+                    candidate.assignment_misses = 0
+                    candidate.stale_since = None
+                    self.store.add(candidate)
+                    s = candidate
+            elif candidate.endpoint in confirmed_missing:
+                self._mark_session_stale(candidate)
                 s = None
 
         if s is None and not ignore_missing_session:
-            typer.echo(f"[colab] Session '{name}' not found.")
+            if self.stale_store.get(name) is not None:
+                typer.echo(
+                    f"[colab] Session '{name}' is stale: its endpoint is not "
+                    "currently in server assignments. Run `colab sessions` to reconcile."
+                )
+            else:
+                typer.echo(f"[colab] Session '{name}' not found.")
             raise typer.Exit(1)
         return s
 
     def sync_sessions(self):
-        if self._sessions is not None:
+        stale_sessions = self.stale_store.list()
+        if self._sessions is not None and not stale_sessions:
             return self._sessions, self.client.list_assignments()
 
-        # Check local store first. If it's empty, we don't necessarily need to hit the backend
-        # unless we are specifically looking for server-side assignments (e.g. 'colab sessions').
         local_sessions = self.store.list()
-        if not local_sessions:
+        if not local_sessions and not stale_sessions:
             self._sessions = {}
-            # We still need to return assignments for 'colab sessions' to work
-            # But we only trigger client creation (and thus auth) if we have to.
             try:
                 assignments = self.client.list_assignments()
             except SystemExit:
-                # If auth fails, we just return empty assignments
                 assignments = []
             return self._sessions, assignments
 
-        assignments = self.client.list_assignments()
-        by_endpoint = {a.endpoint: a for a in assignments}
+        required_endpoints = {
+            s.endpoint for s in [*local_sessions.values(), *stale_sessions.values()]
+        }
+        assignments, by_endpoint, confirmed_missing = self._list_assignments_with_retry(
+            required_endpoints
+        )
 
-        self._sessions = local_sessions
-        pruned = 0
-        for name, s in list(self._sessions.items()):
-            if s.endpoint not in by_endpoint:
-                self.prune_session(name)
-                pruned += 1
-            else:
-                _apply_proxy_info(s, by_endpoint[s.endpoint].runtime_proxy_info)
+        self._sessions = dict(local_sessions)
+        for name, s in list(local_sessions.items()):
+            assignment = by_endpoint.get(s.endpoint)
+            if assignment is not None:
+                _apply_proxy_info(s, assignment.runtime_proxy_info)
+                s.assignment_misses = 0
+                s.stale_since = None
                 self.store.add(s)
+            elif s.endpoint in confirmed_missing:
+                self._mark_session_stale(s)
 
-        if pruned > 0:
-            typer.echo(f"[colab] Pruned {pruned} stale local session(s).")
+        for name, s in list(stale_sessions.items()):
+            assignment = by_endpoint.get(s.endpoint)
+            if assignment is not None:
+                self._recover_stale_session(s, assignment)
+            elif s.endpoint in confirmed_missing:
+                self._mark_session_stale(s)
 
         return self._sessions, assignments
 
@@ -154,6 +288,19 @@ class State:
         # Check local store first to avoid hitting the backend (and triggering auth) if we don't have to
         local_sessions = self.store.list()
         if not local_sessions:
+            stale_sessions = self.stale_store.list()
+            if len(stale_sessions) == 1:
+                name = next(iter(stale_sessions))
+                typer.echo(
+                    f"[colab] Using unique stale session '{name}' for reconciliation."
+                )
+                return name
+            if len(stale_sessions) > 1:
+                typer.echo(
+                    "[colab] Error: Multiple stale sessions found. Specify one with -s: "
+                    + ", ".join(stale_sessions)
+                )
+                raise typer.Exit(1)
             typer.echo(
                 "[colab] Error: No active sessions found. Create one with 'colab new'."
             )

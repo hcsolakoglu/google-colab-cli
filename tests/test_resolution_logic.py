@@ -23,6 +23,8 @@ def test_resolve_session_no_local_sessions():
     state = State()
     state._store = MagicMock()
     state._store.list.return_value = {}
+    state._stale_store = MagicMock()
+    state._stale_store.list.return_value = {}
 
     with patch("typer.echo") as mock_echo:
         with pytest.raises(typer.Exit):
@@ -35,33 +37,39 @@ def test_resolve_session_no_local_sessions():
 def test_resolve_session_with_local_but_none_on_server():
     state = State()
     state._store = MagicMock()
-    # Local session exists
+    state._stale_store = MagicMock()
+    state._stale_store.get.return_value = None
+    state._stale_store.list.return_value = {}
+
     mock_session = MagicMock()
+    mock_session.name = "s1"
     mock_session.endpoint = "e1"
+    mock_session.assignment_misses = 0
+    mock_session.stale_since = None
     state._store.list.return_value = {"s1": mock_session}
 
-    # But server says no assignments
     state._client = MagicMock()
     state._client.list_assignments.return_value = []
-
-    # Mock history and store.remove
     state._history = MagicMock()
 
-    with patch("typer.echo") as mock_echo:
+    with patch("colab_cli.common.time.sleep"), patch("typer.echo") as mock_echo:
         with pytest.raises(typer.Exit):
             state.resolve_session(None)
-        mock_echo.assert_any_call("[colab] Pruned 1 stale local session(s).")
+        assert any("kept as stale" in str(call) for call in mock_echo.call_args_list)
         mock_echo.assert_any_call(
             "[colab] Error: No active sessions found. Create one with 'colab new'."
         )
 
     state._store.remove.assert_called_with("s1")
+    state._stale_store.add.assert_called_once_with(mock_session)
 
 
 def test_sync_sessions_avoids_client_if_no_local():
     state = State()
     state._store = MagicMock()
     state._store.list.return_value = {}
+    state._stale_store = MagicMock()
+    state._stale_store.list.return_value = {}
 
     # We want to verify that self.client is NOT accessed if store.list() is empty
     # unless we explicitly call sync_sessions.
@@ -78,6 +86,8 @@ def test_resolve_session_avoids_sync_if_no_local():
     state = State()
     state._store = MagicMock()
     state._store.list.return_value = {}
+    state._stale_store = MagicMock()
+    state._stale_store.list.return_value = {}
 
     with patch.object(State, "sync_sessions") as mock_sync:
         with pytest.raises(typer.Exit):

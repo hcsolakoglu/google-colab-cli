@@ -50,11 +50,13 @@ def _session(expires_at):
 
 
 @pytest.fixture
-def real_state(tmp_path):
+def real_state(tmp_path, monkeypatch):
     st = State()
     st._store = StateStore(str(tmp_path / "sessions.json"))
+    st._stale_store = StateStore(str(tmp_path / "stale-sessions.json"))
     st._client = MagicMock()
     st._history = MagicMock()
+    monkeypatch.setattr("colab_cli.common.time.sleep", lambda _: None)
     return st
 
 
@@ -93,12 +95,64 @@ def test_get_session_refreshes_stale_token(real_state, expires_at):
     assert persisted.token_expires_at == s.token_expires_at
 
 
-def test_get_session_prunes_when_assignment_gone(real_state):
+def test_get_session_transient_assignment_miss_recovers(real_state):
+    real_state.store.add(_session(None))
+    real_state.client.list_assignments.side_effect = [
+        [],
+        [_assignment("ep1", "new-token")],
+    ]
+
+    s = real_state.get_session("s1")
+
+    assert s.token == "new-token"
+    assert real_state.store.get("s1") is not None
+    assert real_state.stale_store.get("s1") is None
+    assert real_state.client.list_assignments.call_count == 2
+
+
+def test_get_session_keeps_stale_after_confirmed_miss(real_state, capsys):
     real_state.store.add(_session(None))
     real_state.client.list_assignments.return_value = []
 
     assert real_state.get_session("s1", ignore_missing_session=True) is None
     assert real_state.store.get("s1") is None
+    stale = real_state.stale_store.get("s1")
+    assert stale is not None
+    assert stale.endpoint == "ep1"
+    assert stale.assignment_misses == 1
+    assert "kept as stale" in capsys.readouterr().out
+
+
+def test_get_session_recovers_stale_record(real_state, capsys):
+    s = _session(None)
+    s.assignment_misses = 1
+    s.stale_since = datetime.now(timezone.utc)
+    real_state.stale_store.add(s)
+    real_state.client.list_assignments.return_value = [
+        _assignment("ep1", "recovered-token")
+    ]
+
+    recovered = real_state.get_session("s1")
+
+    assert recovered.token == "recovered-token"
+    assert recovered.assignment_misses == 0
+    assert recovered.stale_since is None
+    assert real_state.store.get("s1") is not None
+    assert real_state.stale_store.get("s1") is None
+    assert "Recovered stale session 's1'" in capsys.readouterr().out
+
+
+def test_get_session_prunes_after_three_confirmed_misses(real_state, capsys):
+    real_state.store.add(_session(None))
+    real_state.client.list_assignments.return_value = []
+
+    for _ in range(3):
+        assert real_state.get_session("s1", ignore_missing_session=True) is None
+
+    assert real_state.store.get("s1") is None
+    assert real_state.stale_store.get("s1") is None
+    assert real_state.client.list_assignments.call_count == 6
+    assert "3 consecutive checks" in capsys.readouterr().out
 
 
 def test_get_session_unknown_name_exits(real_state, capsys):
@@ -123,3 +177,18 @@ def test_sync_sessions_updates_tokens(real_state):
     assert sessions["s1"].token == "new-token"
     assert real_state.store.get("s1").token == "new-token"
     assert real_state.store.get("s1").token_expires_at is not None
+
+
+def test_sync_sessions_retries_single_listing_omission(real_state):
+    real_state.store.add(_session(None))
+    real_state.client.list_assignments.side_effect = [
+        [],
+        [_assignment("ep1", "new-token")],
+    ]
+
+    sessions, assignments = real_state.sync_sessions()
+
+    assert sessions["s1"].token == "new-token"
+    assert [a.endpoint for a in assignments] == ["ep1"]
+    assert real_state.stale_store.get("s1") is None
+    assert real_state.client.list_assignments.call_count == 2

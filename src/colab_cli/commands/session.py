@@ -355,9 +355,27 @@ def stop(
     from colab_cli.common import state
 
     name = state.resolve_session(session)
+    stale_before = state.stale_store.get(name)
     s = state.get_session(name, ignore_missing_session=True)
     if not s:
-        typer.echo(f"[colab] Session '{name}' not found.")
+        stale = state.stale_store.get(name) or stale_before
+        if not stale:
+            typer.echo(f"[colab] Session '{name}' not found.")
+            return
+        typer.echo(
+            f"[colab] Stopping stale session '{name}' by endpoint {stale.endpoint}..."
+        )
+        try:
+            state.client.unassign(stale.endpoint)
+        except ColabRequestError as e:
+            if get_status_code(e) != 404:
+                raise
+        state.store.remove(name)
+        state.stale_store.remove(name)
+        state.history.log_event(
+            name, "session_terminated", {"reason": "user_requested_stale"}
+        )
+        typer.echo("[colab] Session terminated.")
         return
 
     typer.echo(f"[colab] Stopping session '{name}'...")

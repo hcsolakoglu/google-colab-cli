@@ -82,7 +82,10 @@ def test_cli_install(mock_state, mock_runtime_class, mock_session):
 
 @patch("colab_cli.commands.automation.ColabRuntime")
 @patch("colab_cli.common.state")
-def test_cli_drivemount(mock_state, mock_runtime_class, mock_session):
+def test_cli_drivemount(mock_state, mock_runtime_class, mock_session, mocker):
+    mocker.patch(
+        "colab_cli.drive_mount.persistent_drive_configured", return_value=False
+    )
     mock_state.get_session.return_value = mock_session
     mock_state.resolve_session.return_value = "test-session"
 

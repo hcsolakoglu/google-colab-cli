@@ -37,6 +37,8 @@ class SessionState(BaseModel):
     running: Optional[str] = None
     persistent_drive_mounted: bool = False
     persistent_drive_path: Optional[str] = None
+    assignment_misses: int = 0
+    stale_since: Optional[datetime] = None
 
 
 class Settings(BaseModel):

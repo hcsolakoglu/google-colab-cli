@@ -347,6 +347,24 @@ def test_cli_stop(mock_client, mock_store, mock_common_state):
     mock_store.remove.assert_called_with("s1")
 
 
+def test_cli_stop_stale_session_uses_preserved_endpoint(
+    mock_client, mock_store, mock_common_state
+):
+    stale = MagicMock()
+    stale.endpoint = "e-stale"
+    mock_store.get.return_value = None
+    mock_common_state.resolve_session.return_value = "stale-s1"
+    mock_common_state.stale_store = MagicMock()
+    mock_common_state.stale_store.get.return_value = stale
+
+    result = runner.invoke(app, ["stop", "-s", "stale-s1"])
+
+    assert result.exit_code == 0
+    assert "Stopping stale session 'stale-s1' by endpoint e-stale" in result.output
+    mock_client.unassign.assert_called_once_with("e-stale")
+    mock_common_state.stale_store.remove.assert_called_once_with("stale-s1")
+
+
 def test_cli_sessions_prune(mock_common_state):
     mock_assignment = MagicMock()
     mock_session_state1 = MagicMock()
