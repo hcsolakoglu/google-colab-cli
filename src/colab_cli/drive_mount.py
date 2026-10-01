@@ -188,12 +188,20 @@ def _run_drive_oauth_flow(client_id: str, client_secret: str):
             "the CLI to confirm that persistent Drive authorization was saved."
         ),
     }
-    flow = _new_drive_oauth_flow(client_id, client_secret)
+    previous_relax = os.environ.get("OAUTHLIB_RELAX_TOKEN_SCOPE")
+    os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] = "1"
     try:
-        return flow.run_local_server(open_browser=True, **options)
-    except webbrowser.Error:
         flow = _new_drive_oauth_flow(client_id, client_secret)
-        return flow.run_local_server(open_browser=False, **options)
+        try:
+            return flow.run_local_server(open_browser=True, **options)
+        except webbrowser.Error:
+            flow = _new_drive_oauth_flow(client_id, client_secret)
+            return flow.run_local_server(open_browser=False, **options)
+    finally:
+        if previous_relax is None:
+            os.environ.pop("OAUTHLIB_RELAX_TOKEN_SCOPE", None)
+        else:
+            os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] = previous_relax
 
 
 def login_drive_mount(

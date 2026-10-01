@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import json
+import os
 import webbrowser
 from unittest.mock import MagicMock
 
@@ -72,7 +73,8 @@ def test_login_wraps_post_callback_token_exchange_failure(monkeypatch, mocker):
         login_drive_mount()
 
 
-def test_oauth_flow_falls_back_when_no_desktop_browser(mocker):
+def test_oauth_flow_falls_back_when_no_desktop_browser(monkeypatch, mocker):
+    monkeypatch.setenv("OAUTHLIB_RELAX_TOKEN_SCOPE", "previous")
     first_flow = MagicMock()
     first_flow.run_local_server.side_effect = webbrowser.Error("no browser")
     second_flow = MagicMock()
@@ -89,6 +91,7 @@ def test_oauth_flow_falls_back_when_no_desktop_browser(mocker):
     assert factory.call_count == 2
     assert first_flow.run_local_server.call_args.kwargs["open_browser"] is True
     assert second_flow.run_local_server.call_args.kwargs["open_browser"] is False
+    assert os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] == "previous"
 
 
 def test_login_persists_refresh_token_privately_without_client_secret(
