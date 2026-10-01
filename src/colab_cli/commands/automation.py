@@ -38,7 +38,6 @@ _console = Console()
 INTERACTIVE_AUTOMATION_TIMEOUT_SEC = 600
 
 
-
 def run_automation(
     name: str,
     op: str,
@@ -132,6 +131,9 @@ def run_automation(
         return False
 
     runtime.colab_request_hook = drivefs_hook
+    from colab_cli.drive_mount import configure_persistent_drive_hook
+
+    configure_persistent_drive_hook(runtime, s)
     try:
         s.running = f"automation({op})"
         s.last_execution = (
@@ -204,6 +206,20 @@ def drivemount(
     from colab_cli.common import state
 
     name = state.resolve_session(session)
+
+    from colab_cli.drive_mount import (
+        mount_drive_persistent,
+        persistent_drive_authorized,
+        persistent_drive_configured,
+    )
+
+    if persistent_drive_configured() and persistent_drive_authorized():
+        typer.echo(
+            f"[colab] Mounting Google Drive persistently to '{path}' on {name}..."
+        )
+        mount_drive_persistent(name, path)
+        return
+
     code = f"from google.colab import drive\ndrive.mount('{path}')"
     typer.echo(f"[colab] Mounting Google Drive to '{path}' on {name}...")
     run_automation(

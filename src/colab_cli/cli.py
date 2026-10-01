@@ -23,7 +23,17 @@ from typing_extensions import Annotated
 from colab_cli import auto_update
 from colab_cli.auth import AuthProvider
 from colab_cli.common import state, setup_logging
-from colab_cli.commands import session, execution, files, automation, run, ssh, utility, usage
+from colab_cli.commands import (
+    automation,
+    drive_mount,
+    execution,
+    files,
+    run,
+    session,
+    ssh,
+    usage,
+    utility,
+)
 
 
 class AlphabeticalGroup(TyperGroup):
@@ -143,6 +153,7 @@ session.register(app)
 execution.register(app)
 files.register(app)
 automation.register(app)
+drive_mount.register(app)
 run.register(app)
 ssh.register(app)
 utility.register(app)

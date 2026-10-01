@@ -50,6 +50,14 @@ PUBLIC_SCOPES = [
     "https://www.googleapis.com/auth/drive.file",
 ]
 
+# Minimum grant required for normal control-plane operations. Broader scopes
+# remain optional and should not break token refresh when granular consent
+# declines them.
+REQUIRED_PUBLIC_SCOPES = {
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/colaboratory",
+}
+
 
 TOKEN_CONFIG_PATH = os.path.expanduser("~/.config/colab-cli/token.json")
 
@@ -82,6 +90,27 @@ def _write_private_text(path: str, content: str) -> None:
 REMOTE_REDIRECT_URI = "https://sdk.cloud.google.com/applicationdefaultauthcode.html"
 
 
+def _credential_scopes(creds: Credentials) -> set[str]:
+    granted = getattr(creds, "granted_scopes", None)
+    if granted:
+        if isinstance(granted, str):
+            return set(granted.split())
+        return set(granted)
+    scopes = getattr(creds, "scopes", None)
+    if isinstance(scopes, str):
+        return set(scopes.split())
+    return set(scopes or [])
+
+
+def _credentials_json(creds: Credentials) -> str:
+    """Serialize credentials with the actually granted scope set."""
+    payload = json.loads(creds.to_json())
+    granted = _credential_scopes(creds)
+    if granted:
+        payload["scopes"] = sorted(granted)
+    return json.dumps(payload)
+
+
 def _run_remote_flow(client_config: dict) -> Credentials:
     """Run the remote copy-paste OAuth2 flow.
 
@@ -99,8 +128,29 @@ def _run_remote_flow(client_config: dict) -> Credentials:
     typer.echo("After approving, Google will display an authorization code.", err=True)
     code = input("Enter the authorization code: ").strip()
 
-    flow.fetch_token(code=code)
-    return flow.credentials
+    # Google granular consent can legitimately return a strict subset of the
+    # requested scopes. requests-oauthlib raises on that by default even though
+    # the exchange itself succeeded. Relax only around this exchange, then
+    # explicitly enforce the scopes the control plane truly needs.
+    previous_relax = os.environ.get("OAUTHLIB_RELAX_TOKEN_SCOPE")
+    os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] = "1"
+    try:
+        flow.fetch_token(code=code)
+    finally:
+        if previous_relax is None:
+            os.environ.pop("OAUTHLIB_RELAX_TOKEN_SCOPE", None)
+        else:
+            os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] = previous_relax
+
+    creds = flow.credentials
+    granted = _credential_scopes(creds)
+    missing = REQUIRED_PUBLIC_SCOPES - granted
+    if missing:
+        raise ValueError(
+            "Google authorization did not grant required Colab scopes: "
+            + ", ".join(sorted(missing))
+        )
+    return creds
 
 
 def _get_google_auth_credentials(config_path: str) -> Credentials:
@@ -133,9 +183,10 @@ def _get_google_auth_credentials(config_path: str) -> Credentials:
 
     if os.path.exists(TOKEN_CONFIG_PATH):
         try:
-            creds = Credentials.from_authorized_user_file(
-                TOKEN_CONFIG_PATH, PUBLIC_SCOPES
-            )
+            # Let google-auth restore the scope set persisted in token.json.
+            # Passing PUBLIC_SCOPES here would re-expand a partial grant and
+            # make Google's refresh endpoint reject it with invalid_scope.
+            creds = Credentials.from_authorized_user_file(TOKEN_CONFIG_PATH)
         except Exception as e:
             logger.warning(f"Failed to load token from {TOKEN_CONFIG_PATH}: {e}")
 
@@ -152,7 +203,7 @@ def _get_google_auth_credentials(config_path: str) -> Credentials:
 
         # Save the credentials for the next run
         try:
-            _write_private_text(TOKEN_CONFIG_PATH, creds.to_json())
+            _write_private_text(TOKEN_CONFIG_PATH, _credentials_json(creds))
         except Exception as e:
             logger.error(f"Failed to save token to {TOKEN_CONFIG_PATH}: {e}")
 

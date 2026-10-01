@@ -20,7 +20,7 @@ Designed to support seamless developer productivity, headless automation, and AI
 * **Robust Code Execution:** Run local Python scripts, Jupyter Notebooks (`.ipynb`), or piped `stdin` code; launch interactive REPLs or raw TTY console shells.
 * **Ephemeral Job Runner (`colab run`):** Provision a fresh VM, execute a local script with forwarded arguments, retrieve output files, and automatically tear down the runtime in a single command.
 * **Activity-Based Liveness:** Sessions stay alive as long as the kernel is active, with the Colab backend automatically maintaining liveness.
-* **Seamless Workspace Automation:** Mount Google Drive, authenticate Google Cloud Platform (GCP) credentials, and install dependencies with high-performance `uv` package management.
+* **Seamless Workspace Automation:** Mount Google Drive, optionally reuse a one-time persistent DriveFS OAuth grant across new runtimes, authenticate Google Cloud Platform (GCP) credentials, and install dependencies with high-performance `uv` package management.
 * **State & Log Archival:** Inspect local session states or export interactive history logs to standard Jupyter Notebooks, Markdown, or structured JSONL.
 
 ---
@@ -97,7 +97,7 @@ Run `colab <command> --help` to view specific options, defaults, and detailed he
 | Command | Description |
 | --- | --- |
 | `colab auth [-s NAME]` | Authenticate the VM for GCP services (BigQuery, GCS, etc.) |
-| `colab drivemount [-s NAME] [PATH]` | Mount Google Drive on the VM (default: `/content/drive`) |
+| `colab drivemount [-s NAME] [PATH]` | Mount Google Drive; uses persistent DriveFS credentials when configured, otherwise keeps the interactive flow |\n| `colab drive-mount login` | One-time OAuth login for persistent DriveFS using your own Desktop OAuth client |\n| `colab drive-mount [-s NAME] [--path PATH]` | Mount DriveFS without per-runtime browser consent after login |\n| `colab drive-mount status` / `logout` | Inspect or revoke/remove persistent DriveFS authorization |
 | `colab install [-s NAME] [-r FILE \| PKG...]` | Install packages on the VM using `uv` (falls back to `pip`) |
 | `colab log [-s NAME] [-n N] [-o FILE]` | View or export session history (`.ipynb`, `.md`, `.txt`, `.jsonl`) |
 | `colab usage` | Show account compute-unit usage rate and balance |
@@ -106,7 +106,7 @@ Run `colab <command> --help` to view specific options, defaults, and detailed he
 | `colab update [--install]` | Check for a newer release (and optionally upgrade the CLI in place) |
 
 ### Global Options
-* `--auth {oauth2,adc}` — Authentication strategy for the Colab API (default: `adc`).
+* `--auth {oauth2,adc}` — Authentication strategy for the Colab API (default: `oauth2`).
 * `-c, --client-oauth-config PATH` — Path to public OAuth client credentials configuration (default: `~/.colab-cli-oauth-config.json`).
 * `--config PATH` — Path to local session metadata storage (default: `~/.config/colab-cli/sessions.json`).
 * `--logtostderr` — Direct debug logging output to stderr.

@@ -70,9 +70,23 @@ def resolve_runtime_options(
     high_mem: bool = False,
 ) -> tuple[Variant, Accelerator, Optional[Shape]]:
     """Map CLI flags to backend variant, accelerator, and optional shape."""
+    if gpu and tpu:
+        raise typer.BadParameter(
+            "Choose either --gpu or --tpu, not both.", param_hint="--gpu/--tpu"
+        )
+
     if tpu:
         variant = Variant.TPU
-        accelerator = Accelerator.V5E1 if tpu.lower() == "v5e1" else Accelerator.V6E1
+        mapping = {
+            "v5e1": Accelerator.V5E1,
+            "v6e1": Accelerator.V6E1,
+        }
+        try:
+            accelerator = mapping[tpu.lower()]
+        except KeyError:
+            raise typer.BadParameter(
+                "Unsupported TPU. Choose one of: v5e1, v6e1.", param_hint="--tpu"
+            ) from None
     elif gpu:
         variant = Variant.GPU
         mapping = {
@@ -82,7 +96,13 @@ def resolve_runtime_options(
             "t4": Accelerator.T4,
             "g4": Accelerator.G4,
         }
-        accelerator = mapping.get(gpu.lower(), Accelerator.A100)
+        try:
+            accelerator = mapping[gpu.lower()]
+        except KeyError:
+            raise typer.BadParameter(
+                "Unsupported GPU. Choose one of: T4, L4, G4, H100, A100.",
+                param_hint="--gpu",
+            ) from None
     else:
         variant = Variant.DEFAULT
         accelerator = Accelerator.NONE
@@ -247,6 +267,8 @@ def restart_kernel(
 
     try:
         runtime.restart()
+        s.persistent_drive_mounted = False
+        state.store.add(s)
     finally:
         runtime.stop()
 
@@ -357,4 +379,3 @@ def register(app: typer.Typer):
     app.command(name="restart-kernel")(restart_kernel)
     app.command()(status)
     app.command()(stop)
-

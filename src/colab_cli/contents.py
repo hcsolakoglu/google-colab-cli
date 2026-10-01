@@ -18,7 +18,7 @@ from urllib.parse import quote
 import requests
 
 from colab_cli.state import SessionState
-from colab_cli.utils import get_status_code
+from colab_cli.utils import RuntimeProxyError, get_status_code
 
 
 class ContentsClient:
@@ -39,7 +39,12 @@ class ContentsClient:
 
         response = requests.request(method, url, params=req_params, json=json_data)
 
-        if get_status_code(response) == 404:
+        status_code = get_status_code(response)
+        if status_code in (401, 404) and not response.content:
+            # Tunnel/runtime-proxy credential failures can surface as an
+            # empty 401/404. Genuine Jupyter Contents 404s carry an error body.
+            raise RuntimeProxyError(status_code, response.content)
+        if status_code == 404:
             raise FileNotFoundError(f"File or directory not found: {path}")
 
         response.raise_for_status()

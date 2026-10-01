@@ -20,6 +20,7 @@ from colab_cli.contents import ContentsClient
 from requests import Response
 
 from colab_cli.state import SessionState
+from colab_cli.utils import RuntimeProxyError
 
 
 @pytest.fixture
@@ -87,6 +88,39 @@ def test_404_error(mock_request, client):
 
     with pytest.raises(FileNotFoundError):
         client.list_dir("nonexistent")
+
+
+@patch("colab_cli.contents.requests.request")
+def test_empty_404_is_runtime_proxy_error(mock_request, client):
+    mock_resp = MagicMock(spec=Response)
+    mock_resp.status_code = 404
+    mock_resp.content = b""
+    mock_request.return_value = mock_resp
+
+    with pytest.raises(RuntimeProxyError):
+        client.list_dir("existing")
+
+
+@patch("colab_cli.contents.requests.request")
+def test_empty_401_is_runtime_proxy_error(mock_request, client):
+    mock_resp = MagicMock(spec=Response)
+    mock_resp.status_code = 401
+    mock_resp.content = b""
+    mock_request.return_value = mock_resp
+
+    with pytest.raises(RuntimeProxyError):
+        client.list_dir("existing")
+
+
+@patch("colab_cli.contents.requests.request")
+def test_json_404_remains_file_not_found(mock_request, client):
+    mock_resp = MagicMock(spec=Response)
+    mock_resp.status_code = 404
+    mock_resp.content = b'{"message":"not found"}'
+    mock_request.return_value = mock_resp
+
+    with pytest.raises(FileNotFoundError):
+        client.list_dir("missing")
 
 
 @patch("colab_cli.contents.requests.request")

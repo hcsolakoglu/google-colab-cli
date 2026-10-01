@@ -334,7 +334,7 @@ class Client:
             # the assignment before the response timed out. Re-query the same
             # notebook hash instead of issuing another POST, which could
             # allocate a duplicate runtime.
-            for delay in (0, 1, 2):
+            for delay in (0, 1, 2, 4):
                 if delay:
                     time.sleep(delay)
                 try:

@@ -35,6 +35,8 @@ class SessionState(BaseModel):
     session_id: Optional[str] = None
     last_execution: Optional[Tuple[str, Optional[str], str]] = None
     running: Optional[str] = None
+    persistent_drive_mounted: bool = False
+    persistent_drive_path: Optional[str] = None
 
 
 class Settings(BaseModel):

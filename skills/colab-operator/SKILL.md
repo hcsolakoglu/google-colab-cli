@@ -54,7 +54,7 @@ by running `uv tool install google-colab-cli` or `pip install google-colab-cli`.
 - **Notebooks**: `colab exec -s <name> -f nb.ipynb` runs each code cell and writes results to `<basename>_output.ipynb` next to the input. A `# @title Foo` first line labels the cell in progress output.
 - **Plots/images**: PNG/JPEG outputs are intercepted. Use `--output-image <path>` on `exec`/`repl` to save to a known location (otherwise a temp path is printed). Inline terminal-image escapes are auto-suppressed when stdout isn't a TTY, so piped/captured output stays clean.
 - **Shell**: `echo "cmd" | colab console -s <name>` for batch shell. Console wraps bash in tmux, so even piped output contains terminal-control bytes — filter with `grep -a` for a specific line. `exec` is faster when you don't need a real shell.
-- **Never run `colab repl`, `colab console`, `colab auth`, or `colab drivemount` interactively from an agent** — they expect a TTY and will hang. `repl`/`console` accept piped stdin and exit on EOF; `auth`/`drivemount` genuinely require a human at the terminal.
+- **Never run unpiped `colab repl`, `colab console`, `colab auth`, or legacy interactive `colab drivemount` from an agent** — they can require a TTY/human. Persistent `colab drive-mount` is agent-runnable after the user completes its one-time `login`.
 
 ### Ephemeral one-shot jobs (`colab run`)
 - `colab run [--gpu T4] [--tpu v6e1] [--keep] [-s NAME] script.py [args...]` = `new` + `exec` + `stop` in one command. It provisions a fresh VM, runs the script with `sys.argv` and `__name__ == "__main__"` set like native `python script.py args`, then tears the VM down (unless `--keep`).
@@ -65,7 +65,7 @@ by running `uv tool install google-colab-cli` or `pip install google-colab-cli`.
 
 ### Automate
 - `colab auth -s <name>` — VM-side GCP creds, needed before in-VM GCS/BigQuery calls (interactive; not agent-runnable).
-- `colab drivemount -s <name> [PATH]` — mounts Drive at `/content/drive` by default (interactive; not agent-runnable).
+- `colab drive-mount login` — one-time browser OAuth using the user's own `COLAB_DRIVEFS_CLIENT_ID` / `COLAB_DRIVEFS_CLIENT_SECRET`; stores the refresh token locally with mode 0600.\n- `colab drive-mount -s <name> [--path PATH]` — after login, mounts DriveFS without per-runtime browser consent.\n- `colab drive-mount status|logout` — inspect or revoke/remove persistent Drive auth.\n- `colab drivemount -s <name> [PATH]` — backward-compatible path: uses persistent DriveFS when configured, otherwise falls back to the original interactive flow.
 - `colab install -s <name> pkg1 pkg2` — installs via `uv pip install --system`, falling back to `pip`. Also `colab install -s <name> -r requirements.txt`.
 
 ### Inspect & report

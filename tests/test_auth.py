@@ -12,14 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 from unittest.mock import MagicMock, mock_open, patch
 
 import pytest
 
 from colab_cli.auth import (
     REMOTE_REDIRECT_URI,
+    REQUIRED_PUBLIC_SCOPES,
     TOKEN_CONFIG_PATH,
     AuthProvider,
+    _credentials_json,
+    _run_remote_flow,
     get_credentials,
 )
 
@@ -76,7 +80,9 @@ def test_get_credentials_valid_token(mock_deps):
     with patch("builtins.open", m_open):
         res = get_credentials("dummy_config.json", provider=AuthProvider.OAUTH2)
 
-    mock_deps["creds_cls"].from_authorized_user_file.assert_called_once()
+    mock_deps["creds_cls"].from_authorized_user_file.assert_called_once_with(
+        TOKEN_CONFIG_PATH
+    )
     mock_deps["session"].assert_called_once_with(mock_creds)
     assert res == mock_deps["session"].return_value
 
@@ -100,9 +106,10 @@ def test_get_credentials_expired_token_refresh(mock_deps):
 
     mock_creds.refresh.assert_called_once()
     mock_creds.to_json.assert_called_once()
-    mock_deps["write_private"].assert_called_once_with(
-        TOKEN_CONFIG_PATH, '{"token":"refreshed"}'
-    )
+    mock_deps["write_private"].assert_called_once()
+    path, serialized = mock_deps["write_private"].call_args.args
+    assert path == TOKEN_CONFIG_PATH
+    assert json.loads(serialized)["token"] == "refreshed"
     assert res == mock_deps["session"].return_value
 
 
@@ -113,6 +120,7 @@ def test_get_credentials_no_token(mock_deps, mocker):
     mock_flow = MagicMock()
     mock_creds_new = MagicMock()
     mock_creds_new.to_json.return_value = '{"token":"new"}'
+    mock_creds_new.granted_scopes = set(REQUIRED_PUBLIC_SCOPES)
     mock_flow.authorization_url.return_value = ("https://auth.example/url", "state")
     mock_flow.credentials = mock_creds_new
     mock_deps["flow_cls"].from_client_config.return_value = mock_flow
@@ -133,9 +141,63 @@ def test_get_credentials_no_token(mock_deps, mocker):
     assert kwargs.get("token_usage") == "remote"
     # The pasted code is exchanged for a token.
     mock_flow.fetch_token.assert_called_once_with(code="pasted-code")
-    mock_deps["write_private"].assert_called_once_with(
-        TOKEN_CONFIG_PATH, '{"token":"new"}'
+    mock_deps["write_private"].assert_called_once()
+    path, serialized = mock_deps["write_private"].call_args.args
+    assert path == TOKEN_CONFIG_PATH
+    saved = json.loads(serialized)
+    assert saved["token"] == "new"
+    assert set(saved["scopes"]) == set(REQUIRED_PUBLIC_SCOPES)
+
+
+def test_remote_flow_accepts_granular_grant_and_restores_relax_env(mocker):
+    flow = MagicMock()
+    creds = MagicMock()
+    creds.granted_scopes = set(REQUIRED_PUBLIC_SCOPES)
+    creds.scopes = list(REQUIRED_PUBLIC_SCOPES)
+    flow.credentials = creds
+    flow.authorization_url.return_value = ("https://auth.example", "state")
+    mocker.patch(
+        "colab_cli.auth.InstalledAppFlow.from_client_config", return_value=flow
     )
+    mocker.patch("colab_cli.auth.input", create=True, return_value="code")
+    mocker.patch.dict(
+        "os.environ", {"OAUTHLIB_RELAX_TOKEN_SCOPE": "previous"}, clear=False
+    )
+
+    result = _run_remote_flow({"installed": {"client_id": "id"}})
+
+    assert result is creds
+    flow.fetch_token.assert_called_once_with(code="code")
+    import os
+
+    assert os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] == "previous"
+
+
+def test_remote_flow_rejects_missing_required_scope(mocker):
+    flow = MagicMock()
+    creds = MagicMock()
+    creds.granted_scopes = {"https://www.googleapis.com/auth/userinfo.email"}
+    flow.credentials = creds
+    flow.authorization_url.return_value = ("https://auth.example", "state")
+    mocker.patch(
+        "colab_cli.auth.InstalledAppFlow.from_client_config", return_value=flow
+    )
+    mocker.patch("colab_cli.auth.input", create=True, return_value="code")
+
+    with pytest.raises(ValueError, match="required Colab scopes"):
+        _run_remote_flow({"installed": {"client_id": "id"}})
+
+
+def test_credentials_json_persists_granted_not_requested_scopes():
+    creds = MagicMock()
+    creds.to_json.return_value = json.dumps(
+        {"refresh_token": "r", "scopes": ["requested", "too-broad"]}
+    )
+    creds.granted_scopes = set(REQUIRED_PUBLIC_SCOPES)
+
+    saved = json.loads(_credentials_json(creds))
+
+    assert set(saved["scopes"]) == set(REQUIRED_PUBLIC_SCOPES)
 
 
 def test_remote_redirect_is_not_oob():

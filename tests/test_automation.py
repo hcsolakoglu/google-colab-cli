@@ -106,6 +106,19 @@ def test_cli_drivemount(mock_state, mock_runtime_class, mock_session):
     assert kwargs.get("timeout") is not None and kwargs["timeout"] >= 300
 
 
+def test_cli_drivemount_prefers_persistent_credentials(mock_session, mocker):
+    state = mocker.patch("colab_cli.common.state")
+    state.resolve_session.return_value = "test-session"
+    mocker.patch("colab_cli.drive_mount.persistent_drive_configured", return_value=True)
+    mocker.patch("colab_cli.drive_mount.persistent_drive_authorized", return_value=True)
+    mount = mocker.patch("colab_cli.drive_mount.mount_drive_persistent")
+
+    result = runner.invoke(app, ["drivemount", "-s", "test-session", "/foo/bar"])
+
+    assert result.exit_code == 0
+    mount.assert_called_once_with("test-session", "/foo/bar")
+
+
 @patch("colab_cli.commands.automation.ColabRuntime")
 @patch("colab_cli.common.state")
 def test_cli_auth_uses_long_timeout(mock_state, mock_runtime_class, mock_session):

@@ -184,6 +184,7 @@ class ColabRuntime:
         stdin_hook: Any = None,
         output_hook: Optional[Callable[[Dict[str, Any]], None]] = None,
         timeout: Optional[float] = None,
+        store_history: bool = True,
     ) -> List[Dict[str, Any]]:
         # ``jupyter_kernel_client`` defaults ``timeout`` to ``REQUEST_TIMEOUT``
         # (10 seconds) on both ``execute`` and ``execute_interactive``. That
@@ -196,6 +197,8 @@ class ColabRuntime:
         # pass ``timeout=`` here; otherwise we forward whatever the upstream
         # default is (currently 10s).
         kwargs = {"allow_stdin": allow_stdin}
+        if not store_history:
+            kwargs["store_history"] = False
         if timeout is not None:
             kwargs["timeout"] = timeout
 

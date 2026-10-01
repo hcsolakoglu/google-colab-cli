@@ -8,6 +8,7 @@ import os
 import uuid
 from unittest.mock import MagicMock
 
+import pytest
 import requests
 
 from colab_cli.auth import _write_private_text
@@ -82,6 +83,30 @@ def test_assign_recovers_committed_assignment_after_read_timeout(mocker):
 
     assert result == recovered
     assert get_assignment.call_count == 3
+
+
+def test_assign_timeout_never_reposts_and_raises_original_after_bounded_poll(mocker):
+    client = Client(Prod(), MagicMock())
+    nbh = uuid.uuid4()
+    pending = GetAssignmentResponse(
+        acc="NONE", nbh="some_nbh", token="xsrf", variant="DEFAULT"
+    )
+    get_assignment = mocker.patch.object(
+        client, "_get_assignment", side_effect=[pending] * 5
+    )
+    post_assignment = mocker.patch.object(
+        client,
+        "_post_assignment",
+        side_effect=requests.exceptions.ReadTimeout("original-timeout"),
+    )
+    sleep = mocker.patch("colab_cli.client.time.sleep")
+
+    with pytest.raises(requests.exceptions.ReadTimeout, match="original-timeout"):
+        client.assign(nbh)
+
+    post_assignment.assert_called_once()
+    assert get_assignment.call_count == 5
+    assert [call.args[0] for call in sleep.call_args_list] == [1, 2, 4]
 
 
 def test_state_store_creates_private_state_file(tmp_path):

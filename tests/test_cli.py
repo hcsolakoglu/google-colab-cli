@@ -110,6 +110,30 @@ def test_cli_new_gpu_variants(mock_client, mock_store, gpu_flag, expected_acc):
     assert added_state.accelerator == expected_acc
 
 
+def test_cli_new_rejects_unknown_gpu_before_allocation(mock_client):
+    result = runner.invoke(app, ["new", "-s", "bad", "--gpu", "RTX5090"])
+
+    assert result.exit_code == 2
+    assert "Unsupported GPU" in result.output
+    mock_client.assign.assert_not_called()
+
+
+def test_cli_new_rejects_unknown_tpu_before_allocation(mock_client):
+    result = runner.invoke(app, ["new", "-s", "bad", "--tpu", "v99"])
+
+    assert result.exit_code == 2
+    assert "Unsupported TPU" in result.output
+    mock_client.assign.assert_not_called()
+
+
+def test_cli_new_rejects_gpu_and_tpu_together(mock_client):
+    result = runner.invoke(app, ["new", "-s", "bad", "--gpu", "T4", "--tpu", "v5e1"])
+
+    assert result.exit_code == 2
+    assert "either --gpu or --tpu" in result.output
+    mock_client.assign.assert_not_called()
+
+
 def test_cli_sessions_unified_format(mock_client, mock_common_state):
     """`sessions` should lead each line with the local name when known:
     `[name] endpoint | Hardware: X | Shape: Y | Variant: Z`.

@@ -216,6 +216,9 @@ def exec_command(
         on_kernel_started=on_started,
         on_session_started=on_sess_started,
     )
+    from colab_cli.drive_mount import configure_persistent_drive_hook
+
+    configure_persistent_drive_hook(runtime, s)
     try:
         # Ensure we are in /content which is the standard Colab working directory
         runtime.execute_code(
@@ -317,6 +320,9 @@ def repl(
         on_kernel_started=on_started,
         on_session_started=on_sess_started,
     )
+    from colab_cli.drive_mount import configure_persistent_drive_hook
+
+    configure_persistent_drive_hook(runtime, s)
     try:
         # Ensure we are in /content which is the standard Colab working directory
         runtime.execute_code(
