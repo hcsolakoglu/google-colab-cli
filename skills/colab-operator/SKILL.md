@@ -65,7 +65,11 @@ by running `uv tool install google-colab-cli` or `pip install google-colab-cli`.
 
 ### Automate
 - `colab auth -s <name>` — VM-side GCP creds, needed before in-VM GCS/BigQuery calls (interactive; not agent-runnable).
-- `colab drive-mount login` — one-time browser OAuth using the user's own `COLAB_DRIVEFS_CLIENT_ID` / `COLAB_DRIVEFS_CLIENT_SECRET`; stores the refresh token locally with mode 0600.\n- `colab drive-mount -s <name> [--path PATH]` — after login, mounts DriveFS without per-runtime browser consent.\n- `colab drive-mount status|logout` — inspect or revoke/remove persistent Drive auth.\n- `colab drivemount -s <name> [PATH]` — backward-compatible path: uses persistent DriveFS when configured, otherwise falls back to the original interactive flow.
+- `colab drive-mount login --client-config /path/to/client_secret.json` — one-time OAuth. The Desktop client JSON is copied to `~/.config/colab-cli/drive-mount-client.json` and the refresh token to `drive-mount-auth.json`; both are user-only (0600). Environment variables remain an override, not a per-shell requirement.
+- If no runnable desktop browser is discoverable, login falls back to printing the loopback authorization URL instead of raising a browser error. Open that URL on the same machine because the callback binds to localhost.
+- `colab drive-mount -s <name> [--path PATH]` — after login, mounts DriveFS without per-runtime browser consent.
+- `colab drive-mount status|logout` — inspect or revoke/remove persistent Drive auth.
+- `colab drivemount -s <name> [PATH]` — backward-compatible path: uses persistent DriveFS when configured, otherwise falls back to the original interactive flow.
 - `colab install -s <name> pkg1 pkg2` — installs via `uv pip install --system`, falling back to `pip`. Also `colab install -s <name> -r requirements.txt`.
 
 ### Inspect & report

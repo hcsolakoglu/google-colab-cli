@@ -97,7 +97,10 @@ Run `colab <command> --help` to view specific options, defaults, and detailed he
 | Command | Description |
 | --- | --- |
 | `colab auth [-s NAME]` | Authenticate the VM for GCP services (BigQuery, GCS, etc.) |
-| `colab drivemount [-s NAME] [PATH]` | Mount Google Drive; uses persistent DriveFS credentials when configured, otherwise keeps the interactive flow |\n| `colab drive-mount login` | One-time OAuth login for persistent DriveFS using your own Desktop OAuth client |\n| `colab drive-mount [-s NAME] [--path PATH]` | Mount DriveFS without per-runtime browser consent after login |\n| `colab drive-mount status` / `logout` | Inspect or revoke/remove persistent DriveFS authorization |
+| `colab drivemount [-s NAME] [PATH]` | Mount Google Drive; uses persistent DriveFS credentials when configured, otherwise keeps the interactive flow |
+| `colab drive-mount login --client-config PATH` | One-time OAuth login using your Desktop OAuth JSON; copies it privately to `~/.config/colab-cli/drive-mount-client.json` |
+| `colab drive-mount [-s NAME] [--path PATH]` | Mount DriveFS without per-runtime browser consent after login |
+| `colab drive-mount status` / `logout` | Inspect or revoke/remove persistent DriveFS authorization |
 | `colab install [-s NAME] [-r FILE \| PKG...]` | Install packages on the VM using `uv` (falls back to `pip`) |
 | `colab log [-s NAME] [-n N] [-o FILE]` | View or export session history (`.ipynb`, `.md`, `.txt`, `.jsonl`) |
 | `colab usage` | Show account compute-unit usage rate and balance |
@@ -127,17 +130,23 @@ colab download -s trainer checkpoints/model.bin ./model.bin
 colab stop -s trainer
 ```
 
-### Workspace Notebook Execution with Drive Integration
+### Workspace Notebook Execution with Persistent Drive Integration
 
-Mount Google Drive, run a local notebook against the VM kernel (outputs are written back into `report_output.ipynb`), export a Markdown log of the execution, and clean up:
+Authorize once with your own Google OAuth Desktop client JSON, then reuse the grant across new runtimes without repeating browser consent:
 
 ```bash
+# One-time setup
+colab drive-mount login --client-config ~/Downloads/client_secret.json
+
+# Each runtime
 colab new -s analysis
-colab drivemount -s analysis
+colab drive-mount -s analysis
 colab exec -s analysis -f report.ipynb
 colab log -s analysis -o execution_log.md
 colab stop -s analysis
 ```
+
+If no desktop browser is discoverable, `drive-mount login` prints the loopback authorization URL instead of failing; open that URL in a browser on the same machine. `colab drivemount` remains backward compatible and uses the persistent path automatically when configured.
 
 ---
 
@@ -146,7 +155,7 @@ colab stop -s analysis
 * **Machine shape:** Use `--high-mem` with `colab new`, `colab run`, or `colab ssh` (when auto-creating a runtime) to request a high-RAM machine shape. Requires Colab Pro or Pro+ entitlement for supported accelerators (CPU, T4, A100, etc.). L4 and TPU runtimes ignore this flag because they only offer one shape. Machine shape is shown in `colab sessions` and `colab status`.
 * **TTY Requirements:** The interactive commands `repl` and `console` require a local TTY. When running inside automated scripts or pipelines, make sure to pipe stdin (e.g., `echo "print(1)" | colab repl`) to trigger non-interactive execution modes.
 * **Transparent Code Execution:** When calling `colab exec -f file.py`, the CLI reads the file locally and transmits its content to the remote kernel. You do not need to manually upload files before execution.
-* **Storage & State Paths:** Session tokens and metadata are stored at `~/.config/colab-cli/sessions.json`. Global CLI settings are located at `~/.config/colab-cli/settings.json`. These can be customized or isolated via the global `--config` flag.
+* **Storage & State Paths:** Session tokens and metadata are stored at `~/.config/colab-cli/sessions.json`. Persistent DriveFS stores the private Desktop OAuth client in `drive-mount-client.json` and its refresh grant in `drive-mount-auth.json`; both are created with user-only permissions. Global CLI settings are located at `~/.config/colab-cli/settings.json`. Session state can be customized or isolated via the global `--config` flag.
 
 ### Ephemeral Accelerator Jobs
 
