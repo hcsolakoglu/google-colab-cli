@@ -14,11 +14,13 @@
 
 import json
 from unittest.mock import MagicMock
+import webbrowser
 
 from colab_cli.drive_mount import (
     DRIVE_MOUNT_SCOPES,
     persistent_drive_authorized,
     persistent_drive_configured,
+    _run_drive_oauth_flow,
     configure_persistent_drive_hook,
     drive_mount_status,
     login_drive_mount,
@@ -53,6 +55,25 @@ def _auth_payload():
         "email": "user@example.com",
         "created_at": "2026-10-01T00:00:00+00:00",
     }
+
+
+def test_oauth_flow_falls_back_when_no_desktop_browser(mocker):
+    first_flow = MagicMock()
+    first_flow.run_local_server.side_effect = webbrowser.Error("no browser")
+    second_flow = MagicMock()
+    creds = MagicMock()
+    second_flow.run_local_server.return_value = creds
+    factory = mocker.patch(
+        "colab_cli.drive_mount._new_drive_oauth_flow",
+        side_effect=[first_flow, second_flow],
+    )
+
+    result = _run_drive_oauth_flow("client-id", "client-secret")
+
+    assert result is creds
+    assert factory.call_count == 2
+    assert first_flow.run_local_server.call_args.kwargs["open_browser"] is True
+    assert second_flow.run_local_server.call_args.kwargs["open_browser"] is False
 
 
 def test_login_persists_refresh_token_privately_without_client_secret(

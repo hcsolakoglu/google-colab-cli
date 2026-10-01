@@ -25,6 +25,7 @@ import json
 import os
 from pathlib import Path
 from typing import Any, Iterable, Optional
+import webbrowser
 
 from google.auth.transport.requests import AuthorizedSession
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -166,6 +167,32 @@ def _desktop_client_config(client_id: str, client_secret: str) -> dict[str, Any]
     }
 
 
+def _new_drive_oauth_flow(client_id: str, client_secret: str) -> InstalledAppFlow:
+    return InstalledAppFlow.from_client_config(
+        _desktop_client_config(client_id, client_secret),
+        scopes=list(DRIVE_MOUNT_SCOPES),
+    )
+
+
+def _run_drive_oauth_flow(client_id: str, client_secret: str):
+    options = {
+        "host": "127.0.0.1",
+        "port": 0,
+        "access_type": "offline",
+        "prompt": "consent",
+        "authorization_prompt_message": (
+            "Open this URL in a browser to authorize persistent Colab Drive mounting:\n{url}"
+        ),
+        "success_message": "Drive authorization complete. You may close this window.",
+    }
+    flow = _new_drive_oauth_flow(client_id, client_secret)
+    try:
+        return flow.run_local_server(open_browser=True, **options)
+    except webbrowser.Error:
+        flow = _new_drive_oauth_flow(client_id, client_secret)
+        return flow.run_local_server(open_browser=False, **options)
+
+
 def login_drive_mount(
     client_config_path: Optional[Path] = None,
 ) -> dict[str, Any]:
@@ -177,21 +204,7 @@ def login_drive_mount(
         _write_private_json(DRIVE_MOUNT_CLIENT_FILE, client_payload)
     else:
         client_id, client_secret = _drive_client_credentials()
-    flow = InstalledAppFlow.from_client_config(
-        _desktop_client_config(client_id, client_secret),
-        scopes=list(DRIVE_MOUNT_SCOPES),
-    )
-    creds = flow.run_local_server(
-        host="127.0.0.1",
-        port=0,
-        open_browser=True,
-        access_type="offline",
-        prompt="consent",
-        authorization_prompt_message=(
-            "Open this URL in a browser to authorize persistent Colab Drive mounting:\n{url}"
-        ),
-        success_message="Drive authorization complete. You may close this window.",
-    )
+    creds = _run_drive_oauth_flow(client_id, client_secret)
     granted = _normalize_scopes(
         getattr(creds, "granted_scopes", None) or getattr(creds, "scopes", None)
     )
