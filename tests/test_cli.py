@@ -392,6 +392,24 @@ def test_cli_new_no_name(mock_client, mock_store):
     assert len(added_state.name) == 6
 
 
+def test_cli_new_clears_stale_record_with_same_name(
+    mock_client, mock_store, mock_common_state
+):
+    mock_common_state.stale_store.get.return_value = MagicMock()
+    mock_res = MagicMock()
+    mock_res.__class__ = PostAssignmentResponse
+    mock_res.runtime_proxy_info.token = "t1"
+    mock_res.runtime_proxy_info.url = "u1"
+    mock_res.endpoint = "e-new"
+    mock_client.assign.return_value = mock_res
+
+    result = runner.invoke(app, ["new", "-s", "reuse"])
+
+    assert result.exit_code == 0
+    mock_common_state.stale_store.remove.assert_called_once_with("reuse")
+    assert mock_store.add.call_args[0][0].endpoint == "e-new"
+
+
 def test_cli_new_default_is_cpu(mock_client, mock_store):
     """`colab new` with no flags must request a CPU runtime (no accelerator).
     A GPU/TPU should only be requested when --gpu or --tpu is explicitly set.

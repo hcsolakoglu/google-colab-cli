@@ -24,6 +24,9 @@ def mock_common_state(mocker):
 
     # Setup standard mocks for properties
     mock_state.store = MagicMock()
+    mock_state.stale_store = MagicMock()
+    mock_state.stale_store.get.return_value = None
+    mock_state.stale_store.list.return_value = {}
     mock_state.client = MagicMock()
     mock_state.history = MagicMock()
 

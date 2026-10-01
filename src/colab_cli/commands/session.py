@@ -223,6 +223,9 @@ def new(
         ),
     )
 
+    stale = state.stale_store.get(name)
+    if stale is not None:
+        state.stale_store.remove(name)
     state.store.add(s)
     state.history.log_event(
         name,
