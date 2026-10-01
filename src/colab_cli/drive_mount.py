@@ -183,7 +183,10 @@ def _run_drive_oauth_flow(client_id: str, client_secret: str):
         "authorization_prompt_message": (
             "Open this URL in a browser to authorize persistent Colab Drive mounting:\n{url}"
         ),
-        "success_message": "Drive authorization complete. You may close this window.",
+        "success_message": (
+            "Authorization callback received. Return to the terminal and wait for "
+            "the CLI to confirm that persistent Drive authorization was saved."
+        ),
     }
     flow = _new_drive_oauth_flow(client_id, client_secret)
     try:
@@ -204,7 +207,17 @@ def login_drive_mount(
         _write_private_json(DRIVE_MOUNT_CLIENT_FILE, client_payload)
     else:
         client_id, client_secret = _drive_client_credentials()
-    creds = _run_drive_oauth_flow(client_id, client_secret)
+    try:
+        creds = _run_drive_oauth_flow(client_id, client_secret)
+    except DriveMountAuthError:
+        raise
+    except Exception as exc:
+        raise DriveMountAuthError(
+            "Google returned to the local OAuth callback, but the token exchange "
+            f"did not complete ({type(exc).__name__}). Re-run colab drive-mount "
+            "login and treat the terminal confirmation, not the browser page, "
+            "as the source of truth."
+        ) from exc
     granted = _normalize_scopes(
         getattr(creds, "granted_scopes", None) or getattr(creds, "scopes", None)
     )

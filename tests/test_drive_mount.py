@@ -13,8 +13,10 @@
 # limitations under the License.
 
 import json
-from unittest.mock import MagicMock
 import webbrowser
+from unittest.mock import MagicMock
+
+import pytest
 
 from colab_cli.drive_mount import (
     DRIVE_MOUNT_SCOPES,
@@ -55,6 +57,19 @@ def _auth_payload():
         "email": "user@example.com",
         "created_at": "2026-10-01T00:00:00+00:00",
     }
+
+
+def test_login_wraps_post_callback_token_exchange_failure(monkeypatch, mocker):
+    _configure(monkeypatch)
+    mocker.patch(
+        "colab_cli.drive_mount._run_drive_oauth_flow",
+        side_effect=ValueError("token exchange failed"),
+    )
+
+    from colab_cli.drive_mount import DriveMountAuthError
+
+    with pytest.raises(DriveMountAuthError, match="token exchange"):
+        login_drive_mount()
 
 
 def test_oauth_flow_falls_back_when_no_desktop_browser(mocker):
