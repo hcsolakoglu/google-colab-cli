@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
 from typing import Optional
 
 import typer
@@ -56,10 +57,20 @@ def drive_mount(
 
 
 @app.command("login")
-def login():
+def login(
+    client_config: Annotated[
+        Optional[str],
+        typer.Option(
+            "--client-config",
+            help="Google OAuth Desktop client JSON; copied privately for future mounts",
+        ),
+    ] = None,
+):
     """Authorize DriveFS once and persist a refresh token locally."""
     try:
-        auth = login_drive_mount()
+        auth = login_drive_mount(
+            Path(client_config).expanduser() if client_config else None
+        )
     except DriveMountAuthError as exc:
         typer.echo(f"[colab] {exc}", err=True)
         raise typer.Exit(1)
@@ -84,6 +95,7 @@ def status():
     if info.get("email"):
         typer.echo(f"Account: {info['email']}")
     typer.echo(f"Credential file: {info['credential_file']}")
+    typer.echo(f"OAuth client file: {info['client_file']}")
 
 
 @app.command("logout")

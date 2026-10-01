@@ -17,6 +17,8 @@ from unittest.mock import MagicMock
 
 from colab_cli.drive_mount import (
     DRIVE_MOUNT_SCOPES,
+    persistent_drive_authorized,
+    persistent_drive_configured,
     configure_persistent_drive_hook,
     drive_mount_status,
     login_drive_mount,
@@ -29,6 +31,18 @@ from colab_cli.state import SessionState
 def _configure(monkeypatch):
     monkeypatch.setenv("COLAB_DRIVEFS_CLIENT_ID", "client-id")
     monkeypatch.setenv("COLAB_DRIVEFS_CLIENT_SECRET", "client-secret")
+
+
+def _client_payload():
+    return {
+        "installed": {
+            "client_id": "client-id",
+            "client_secret": "client-secret",
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "redirect_uris": ["http://localhost"],
+        }
+    }
 
 
 def _auth_payload():
@@ -74,6 +88,40 @@ def test_login_persists_refresh_token_privately_without_client_secret(
     kwargs = flow.run_local_server.call_args.kwargs
     assert kwargs["access_type"] == "offline"
     assert kwargs["prompt"] == "consent"
+
+
+def test_login_with_client_config_copies_private_config_for_future_mounts(
+    tmp_path, monkeypatch, mocker
+):
+    monkeypatch.delenv("COLAB_DRIVEFS_CLIENT_ID", raising=False)
+    monkeypatch.delenv("COLAB_DRIVEFS_CLIENT_SECRET", raising=False)
+    source = tmp_path / "downloaded-client.json"
+    source.write_text(json.dumps(_client_payload()))
+    client_file = tmp_path / "drive-mount-client.json"
+    auth_file = tmp_path / "drive-mount-auth.json"
+    monkeypatch.setattr("colab_cli.drive_mount.DRIVE_MOUNT_CLIENT_FILE", client_file)
+    monkeypatch.setattr("colab_cli.drive_mount.DRIVE_MOUNT_AUTH_FILE", auth_file)
+
+    creds = MagicMock()
+    creds.refresh_token = "refresh-secret"
+    creds.granted_scopes = set(DRIVE_MOUNT_SCOPES)
+    flow = MagicMock()
+    flow.run_local_server.return_value = creds
+    flow_cls = mocker.patch("colab_cli.drive_mount.InstalledAppFlow")
+    flow_cls.from_client_config.return_value = flow
+    userinfo = MagicMock()
+    userinfo.get.return_value = MagicMock(
+        json=lambda: {"email": "user@example.com"},
+        raise_for_status=lambda: None,
+    )
+    mocker.patch("colab_cli.drive_mount.AuthorizedSession", return_value=userinfo)
+
+    login_drive_mount(source)
+
+    assert json.loads(client_file.read_text()) == _client_payload()
+    assert client_file.stat().st_mode & 0o777 == 0o600
+    assert persistent_drive_configured() is True
+    assert persistent_drive_authorized() is True
 
 
 def test_status_reports_client_mismatch(tmp_path, monkeypatch):

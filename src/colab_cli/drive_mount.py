@@ -36,6 +36,9 @@ from colab_cli.runtime import ColabRuntime
 DRIVE_MOUNT_AUTH_FILE = Path(
     os.path.expanduser("~/.config/colab-cli/drive-mount-auth.json")
 )
+DRIVE_MOUNT_CLIENT_FILE = Path(
+    os.path.expanduser("~/.config/colab-cli/drive-mount-client.json")
+)
 DRIVEFS_CLIENT_ID_ENV = "COLAB_DRIVEFS_CLIENT_ID"
 DRIVEFS_CLIENT_SECRET_ENV = "COLAB_DRIVEFS_CLIENT_SECRET"
 DRIVE_MOUNT_SCOPES = (
@@ -59,23 +62,59 @@ def _normalize_scopes(scopes: Optional[Iterable[str] | str]) -> set[str]:
     return set(scopes)
 
 
-def _drive_client_credentials() -> tuple[str, str]:
-    client_id = os.environ.get(DRIVEFS_CLIENT_ID_ENV, "").strip()
-    client_secret = os.environ.get(DRIVEFS_CLIENT_SECRET_ENV, "").strip()
+def _read_desktop_client_file(path: Path) -> tuple[str, str, dict[str, Any]]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise DriveMountAuthError(
+            f"OAuth Desktop client file not found: {path}"
+        ) from exc
+    except (OSError, json.JSONDecodeError) as exc:
+        raise DriveMountAuthError(
+            f"Could not read OAuth Desktop client file {path}: {exc}"
+        ) from exc
+
+    installed = payload.get("installed") if isinstance(payload, dict) else None
+    if not isinstance(installed, dict):
+        raise DriveMountAuthError(
+            f"{path} is not a Google OAuth Desktop client JSON (missing installed config)."
+        )
+    client_id = str(installed.get("client_id") or "").strip()
+    client_secret = str(installed.get("client_secret") or "").strip()
     if not client_id or not client_secret:
         raise DriveMountAuthError(
-            "Persistent DriveFS is not configured. Set "
-            f"{DRIVEFS_CLIENT_ID_ENV} and {DRIVEFS_CLIENT_SECRET_ENV} "
-            "to your Google OAuth Desktop client credentials."
+            f"{path} is missing OAuth Desktop client_id/client_secret."
         )
-    return client_id, client_secret
+    return client_id, client_secret, payload
+
+
+def _drive_client_credentials(
+    client_config_path: Optional[Path] = None,
+) -> tuple[str, str]:
+    client_id = os.environ.get(DRIVEFS_CLIENT_ID_ENV, "").strip()
+    client_secret = os.environ.get(DRIVEFS_CLIENT_SECRET_ENV, "").strip()
+    if client_id and client_secret:
+        return client_id, client_secret
+    if client_id or client_secret:
+        raise DriveMountAuthError(
+            f"Set both {DRIVEFS_CLIENT_ID_ENV} and {DRIVEFS_CLIENT_SECRET_ENV}, or neither."
+        )
+
+    path = client_config_path or DRIVE_MOUNT_CLIENT_FILE
+    file_id, file_secret, _ = _read_desktop_client_file(path)
+    return file_id, file_secret
 
 
 def persistent_drive_configured() -> bool:
-    return bool(
-        os.environ.get(DRIVEFS_CLIENT_ID_ENV, "").strip()
-        and os.environ.get(DRIVEFS_CLIENT_SECRET_ENV, "").strip()
-    )
+    client_id = os.environ.get(DRIVEFS_CLIENT_ID_ENV, "").strip()
+    client_secret = os.environ.get(DRIVEFS_CLIENT_SECRET_ENV, "").strip()
+    if client_id or client_secret:
+        return bool(client_id and client_secret)
+    try:
+        _read_desktop_client_file(DRIVE_MOUNT_CLIENT_FILE)
+        return True
+    except DriveMountAuthError:
+        return False
 
 
 def _write_private_json(path: Path, payload: dict[str, Any]) -> None:
@@ -109,12 +148,10 @@ def load_drive_mount_auth() -> Optional[dict[str, Any]]:
 def persistent_drive_authorized() -> bool:
     try:
         auth = load_drive_mount_auth()
+        client_id, _ = _drive_client_credentials()
     except DriveMountAuthError:
         return False
-    if not auth:
-        return False
-    current_id = os.environ.get(DRIVEFS_CLIENT_ID_ENV, "").strip()
-    return not current_id or auth.get("client_id") == current_id
+    return bool(auth and auth.get("client_id") == client_id)
 
 
 def _desktop_client_config(client_id: str, client_secret: str) -> dict[str, Any]:
@@ -129,9 +166,17 @@ def _desktop_client_config(client_id: str, client_secret: str) -> dict[str, Any]
     }
 
 
-def login_drive_mount() -> dict[str, Any]:
-    """Authorize once and persist only the refresh token plus non-secret metadata."""
-    client_id, client_secret = _drive_client_credentials()
+def login_drive_mount(
+    client_config_path: Optional[Path] = None,
+) -> dict[str, Any]:
+    """Authorize once and persist the refresh token plus a private Desktop client config."""
+    if client_config_path is not None:
+        client_id, client_secret, client_payload = _read_desktop_client_file(
+            client_config_path
+        )
+        _write_private_json(DRIVE_MOUNT_CLIENT_FILE, client_payload)
+    else:
+        client_id, client_secret = _drive_client_credentials()
     flow = InstalledAppFlow.from_client_config(
         _desktop_client_config(client_id, client_secret),
         scopes=list(DRIVE_MOUNT_SCOPES),
@@ -210,7 +255,12 @@ def logout_drive_mount() -> bool:
 def drive_mount_status() -> dict[str, Any]:
     auth = load_drive_mount_auth()
     configured = persistent_drive_configured()
-    current_id = os.environ.get(DRIVEFS_CLIENT_ID_ENV, "").strip() or None
+    current_id = None
+    if configured:
+        try:
+            current_id, _ = _drive_client_credentials()
+        except DriveMountAuthError:
+            configured = False
     return {
         "configured": configured,
         "authorized": bool(auth),
@@ -219,6 +269,7 @@ def drive_mount_status() -> dict[str, Any]:
         ),
         "email": auth.get("email") if auth else None,
         "credential_file": str(DRIVE_MOUNT_AUTH_FILE),
+        "client_file": str(DRIVE_MOUNT_CLIENT_FILE),
     }
 
 
